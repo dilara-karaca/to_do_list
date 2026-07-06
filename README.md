@@ -16,11 +16,8 @@ npm run dev
 
 ## Ortam Değişkenleri
 
-`VITE_SUPABASE_URL` ve `VITE_SUPABASE_ANON_KEY` değerlerini `.env` dosyasına ekleyin. Örnek için [.env.example](.env.example) dosyasına bakın.
+`VITE_SUPABASE_URL` ve `VITE_SUPABASE_ANON_KEY` değerlerini `.env` dosyasına ekleyin. 
 
-## Yapı
-
-Klasör özeti için [docs/project-structure.md](docs/project-structure.md) dosyasını kullanın.
 
 ## Supabase SQL ve RLS
 
