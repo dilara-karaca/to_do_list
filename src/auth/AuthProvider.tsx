@@ -1,0 +1,354 @@
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import type { AppUser, AuthSessionState, UserRole } from '../types/auth';
+import { mockUsers } from './mockData';
+
+type AuthContextValue = AuthSessionState & {
+    signIn: (email: string, password: string) => Promise<{ ok: boolean; message: string }>;
+    signUp: (payload: { fullName: string; email: string; password: string; passwordConfirm: string }) => Promise<{ ok: boolean; message: string }>;
+    requestPasswordReset: (email: string) => Promise<{ ok: boolean; message: string }>;
+    signOut: () => void;
+    updateRole: (userId: string, role: UserRole) => void;
+    updateProfile: (userId: string, changes: Partial<AppUser>) => void;
+    setEmailConfirmed: (userId: string, confirmed: boolean) => void;
+    setActive: (userId: string, active: boolean) => void;
+    users: AppUser[];
+};
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+const storageKey = 'planner-auth-state';
+const profileStorageKey = 'planner-profile-state';
+
+const emailPattern = /^\S+@\S+\.\S+$/;
+
+const isStrongPassword = (password: string) =>
+    password.length >= 10 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /\d/.test(password) && /[^A-Za-z0-9]/.test(password);
+
+const readUsers = (): AppUser[] => {
+    try {
+        const raw = localStorage.getItem(storageKey);
+        if (!raw) {
+            return mockUsers;
+        }
+
+        const parsed = JSON.parse(raw) as { users?: AppUser[] };
+        return parsed.users?.length ? parsed.users : mockUsers;
+    } catch {
+        return mockUsers;
+    }
+};
+
+const mergeUsers = (currentUsers: AppUser[], nextUser: AppUser) => {
+    const exists = currentUsers.some((candidate) => candidate.id === nextUser.id);
+    if (exists) {
+        return currentUsers.map((candidate) => (candidate.id === nextUser.id ? nextUser : candidate));
+    }
+
+    return [nextUser, ...currentUsers];
+};
+
+const getStoredProfile = (userId: string | null) => {
+    try {
+        if (!userId) {
+            return null;
+        }
+
+        const raw = localStorage.getItem(profileStorageKey);
+        if (!raw) {
+            return null;
+        }
+
+        const parsed = JSON.parse(raw) as Record<string, AppUser>;
+        return parsed[userId] ?? null;
+    } catch {
+        return null;
+    }
+};
+
+const saveStoredProfile = (profile: AppUser) => {
+    try {
+        const raw = localStorage.getItem(profileStorageKey);
+        const parsed = raw ? (JSON.parse(raw) as Record<string, AppUser>) : {};
+        parsed[profile.id] = profile;
+        localStorage.setItem(profileStorageKey, JSON.stringify(parsed));
+    } catch {
+        // Ignore local profile persistence errors.
+    }
+};
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+    const [user, setUser] = useState<AppUser | null>(null);
+    const [users, setUsers] = useState<AppUser[]>(() => readUsers());
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        if (isSupabaseConfigured && supabase) {
+            void supabase.auth.getSession().then(({ data, error }) => {
+                if (error) {
+                    setLoading(false);
+                    return;
+                }
+
+                const sessionUser = data.session?.user ?? null;
+                if (!sessionUser) {
+                    setLoading(false);
+                    return;
+                }
+
+                const storedProfile = getStoredProfile(sessionUser.id);
+                const nextUser: AppUser = storedProfile ?? {
+                    id: sessionUser.id,
+                    fullName: String(sessionUser.user_metadata?.full_name ?? sessionUser.email ?? ''),
+                    email: sessionUser.email ?? '',
+                    role: (sessionUser.app_metadata?.role as UserRole | undefined) ?? 'user',
+                    emailConfirmed: Boolean(sessionUser.email_confirmed_at),
+                    createdAt: sessionUser.created_at,
+                    updatedAt: sessionUser.updated_at ?? sessionUser.created_at,
+                    lastSignInAt: sessionUser.last_sign_in_at ?? null,
+                    active: true,
+                    avatarUrl: null,
+                };
+
+                setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
+                setUser(nextUser);
+                setLoading(false);
+            });
+
+            const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+                if (!session?.user) {
+                    setUser(null);
+                    return;
+                }
+
+                const sessionUser = session.user;
+                const storedProfile = getStoredProfile(sessionUser.id);
+                const nextUser: AppUser = storedProfile ?? {
+                    id: sessionUser.id,
+                    fullName: String(sessionUser.user_metadata?.full_name ?? sessionUser.email ?? ''),
+                    email: sessionUser.email ?? '',
+                    role: (sessionUser.app_metadata?.role as UserRole | undefined) ?? 'user',
+                    emailConfirmed: Boolean(sessionUser.email_confirmed_at),
+                    createdAt: sessionUser.created_at,
+                    updatedAt: sessionUser.updated_at ?? sessionUser.created_at,
+                    lastSignInAt: sessionUser.last_sign_in_at ?? null,
+                    active: true,
+                    avatarUrl: null,
+                };
+
+                setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
+                setUser(nextUser);
+                saveStoredProfile(nextUser);
+            });
+
+            return () => {
+                subscription.subscription.unsubscribe();
+            };
+        }
+
+        try {
+            const raw = localStorage.getItem(storageKey);
+            if (raw) {
+                const parsed = JSON.parse(raw) as { userId?: string; users?: AppUser[] };
+                if (parsed.users?.length) {
+                    setUsers(parsed.users);
+                }
+                if (parsed.userId) {
+                    setUser(parsed.users?.find((candidate) => candidate.id === parsed.userId) ?? null);
+                }
+            }
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        localStorage.setItem(storageKey, JSON.stringify({ userId: user?.id ?? null, users }));
+    }, [user, users]);
+
+    const signIn = async (email: string, password: string) => {
+        if (isSupabaseConfigured && supabase) {
+            const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+            if (error || !data.user) {
+                return { ok: false, message: error?.message ?? 'Giriş yapılamadı.' };
+            }
+
+            const nextUser: AppUser = {
+                id: data.user.id,
+                fullName: String(data.user.user_metadata?.full_name ?? data.user.email ?? ''),
+                email: data.user.email ?? email,
+                role: (data.user.app_metadata?.role as UserRole | undefined) ?? 'user',
+                emailConfirmed: Boolean(data.user.email_confirmed_at),
+                createdAt: data.user.created_at,
+                updatedAt: data.user.updated_at ?? data.user.created_at,
+                lastSignInAt: data.user.last_sign_in_at ?? null,
+                active: true,
+                avatarUrl: null,
+            };
+
+            setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
+            setUser(nextUser);
+            saveStoredProfile(nextUser);
+            return { ok: true, message: 'Giriş başarılı.' };
+        }
+
+        const matched = users.find((candidate) => candidate.email.toLowerCase() === email.toLowerCase());
+
+        if (!matched) {
+            return { ok: false, message: 'Kullanıcı bulunamadı.' };
+        }
+
+        if (!matched.active) {
+            return { ok: false, message: 'Hesap pasifleştirilmiş.' };
+        }
+
+        if (!matched.emailConfirmed) {
+            return { ok: false, message: 'Mail doğrulanmadan giriş yapılamaz.' };
+        }
+
+        if (!password.trim()) {
+            return { ok: false, message: 'Şifre gerekli.' };
+        }
+
+        const nextUser = { ...matched, lastSignInAt: new Date().toISOString() };
+        setUser(nextUser);
+        setUsers((currentUsers) => currentUsers.map((candidate) => (candidate.id === matched.id ? nextUser : candidate)));
+        return { ok: true, message: 'Giriş başarılı.' };
+    };
+
+    const signUp = async ({ fullName, email, password, passwordConfirm }: { fullName: string; email: string; password: string; passwordConfirm: string }) => {
+        if (!fullName.trim()) return { ok: false, message: 'Ad soyad gerekli.' };
+        if (!emailPattern.test(email)) return { ok: false, message: 'Geçerli bir e-posta girin.' };
+        if (password !== passwordConfirm) return { ok: false, message: 'Şifreler eşleşmiyor.' };
+        if (!isStrongPassword(password)) return { ok: false, message: 'Şifre güçlü değil.' };
+
+        if (isSupabaseConfigured && supabase) {
+            const { data, error } = await supabase.auth.signUp({
+                email,
+                password,
+                options: {
+                    emailRedirectTo: `${window.location.origin}/login`,
+                    data: {
+                        full_name: fullName,
+                        role: 'user',
+                    },
+                },
+            });
+
+            if (error) {
+                const normalizedMessage = error.message.toLowerCase();
+                if (normalizedMessage.includes('user already registered') || normalizedMessage.includes('email already registered') || normalizedMessage.includes('already exists')) {
+                    return { ok: false, message: 'Bu e-posta zaten kayıtlı.' };
+                }
+
+                return { ok: false, message: error.message };
+            }
+
+            if (data.user) {
+                const nextUser: AppUser = {
+                    id: data.user.id,
+                    fullName,
+                    email,
+                    role: 'user',
+                    emailConfirmed: Boolean(data.user.email_confirmed_at),
+                    createdAt: data.user.created_at,
+                    updatedAt: data.user.updated_at ?? data.user.created_at,
+                    lastSignInAt: null,
+                    active: true,
+                    avatarUrl: null,
+                };
+
+                setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
+                saveStoredProfile(nextUser);
+            }
+
+            return { ok: true, message: 'Doğrulama e-postası gönderildi. Mailini kontrol et.' };
+        }
+
+        const now = new Date().toISOString();
+        const nextUser: AppUser = {
+            id: crypto.randomUUID(),
+            fullName,
+            email,
+            role: 'user',
+            emailConfirmed: false,
+            createdAt: now,
+            updatedAt: now,
+            lastSignInAt: null,
+            active: true,
+            avatarUrl: null,
+        };
+
+        setUsers((currentUsers) => [nextUser, ...currentUsers]);
+        return { ok: true, message: 'Doğrulama e-postası gönderildi.' };
+    };
+
+    const requestPasswordReset = async (email: string) => {
+        if (isSupabaseConfigured && supabase) {
+            const { error } = await supabase.auth.resetPasswordForEmail(email, {
+                redirectTo: `${window.location.origin}/login`,
+            });
+
+            if (error) {
+                return { ok: false, message: error.message };
+            }
+
+            return { ok: true, message: 'Şifre sıfırlama maili gönderildi.' };
+        }
+
+        const exists = users.some((candidate) => candidate.email.toLowerCase() === email.toLowerCase());
+        return { ok: exists, message: exists ? 'Şifre sıfırlama bağlantısı gönderildi.' : 'E-posta bulunamadı.' };
+    };
+
+    const signOut = async () => {
+        if (isSupabaseConfigured && supabase) {
+            await supabase.auth.signOut();
+        }
+
+        setUser(null);
+    };
+
+    const updateRole = (userId: string, role: UserRole) => {
+        setUsers((currentUsers) => currentUsers.map((candidate) => (candidate.id === userId ? { ...candidate, role, updatedAt: new Date().toISOString() } : candidate)));
+        setUser((currentUser) => (currentUser?.id === userId ? { ...currentUser, role } : currentUser));
+    };
+
+    const updateProfile = (userId: string, changes: Partial<AppUser>) => {
+        setUsers((currentUsers) => currentUsers.map((candidate) => (candidate.id === userId ? { ...candidate, ...changes, updatedAt: new Date().toISOString() } : candidate)));
+        setUser((currentUser) => {
+            if (currentUser?.id !== userId) {
+                return currentUser;
+            }
+
+            const nextUser = { ...currentUser, ...changes };
+            saveStoredProfile(nextUser);
+            return nextUser;
+        });
+    };
+
+    const setEmailConfirmed = (userId: string, confirmed: boolean) => updateProfile(userId, { emailConfirmed: confirmed });
+    const setActive = (userId: string, active: boolean) => updateProfile(userId, { active });
+
+    const value = useMemo<AuthContextValue>(() => ({
+        user,
+        loading,
+        authenticated: Boolean(user),
+        signIn,
+        signUp,
+        requestPasswordReset,
+        signOut,
+        updateRole,
+        updateProfile,
+        setEmailConfirmed,
+        setActive,
+        users,
+    }), [loading, user, users]);
+
+    return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export const useAuth = () => {
+    const context = useContext(AuthContext);
+    if (!context) throw new Error('useAuth must be used within AuthProvider');
+    return context;
+};

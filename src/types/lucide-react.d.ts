@@ -6,6 +6,12 @@ declare module 'lucide-react' {
   export const CheckCircle2: (props: SVGProps<SVGSVGElement>) => JSX.Element;
   export const ChevronLeft: (props: SVGProps<SVGSVGElement>) => JSX.Element;
   export const ChevronRight: (props: SVGProps<SVGSVGElement>) => JSX.Element;
+  export const ChevronDown: (props: SVGProps<SVGSVGElement>) => JSX.Element;
+  export const Eye: (props: SVGProps<SVGSVGElement>) => JSX.Element;
+  export const EyeOff: (props: SVGProps<SVGSVGElement>) => JSX.Element;
+  export const LogOut: (props: SVGProps<SVGSVGElement>) => JSX.Element;
+  export const Settings: (props: SVGProps<SVGSVGElement>) => JSX.Element;
+  export const User: (props: SVGProps<SVGSVGElement>) => JSX.Element;
   export const Plus: (props: SVGProps<SVGSVGElement>) => JSX.Element;
   export const Sparkles: (props: SVGProps<SVGSVGElement>) => JSX.Element;
   export const Trash2: (props: SVGProps<SVGSVGElement>) => JSX.Element;

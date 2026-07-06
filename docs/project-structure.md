@@ -1,0 +1,43 @@
+# Project Structure
+
+```text
+src/
+  App.tsx
+  auth/
+    AuthProvider.tsx
+    ProtectedRoute.tsx
+    RoleRoute.tsx
+    mockData.ts
+  components/
+    Calendar/
+    CalendarDay/
+    DayModal/
+    Header/
+    TaskItem/
+    TaskList/
+  layouts/
+    AppShell.tsx
+    AdminShell.tsx
+  lib/
+    supabase.ts
+  pages/
+    AuthPage.tsx
+    PlannerPage.tsx
+    ProfilePage.tsx
+    SettingsPage.tsx
+    UnauthorizedPage.tsx
+    admin/
+      AdminDashboardPage.tsx
+      AdminPlannerViewPage.tsx
+      AdminSettingsPage.tsx
+      AdminStatsPage.tsx
+      AdminUsersPage.tsx
+  types/
+    auth.ts
+    task.ts
+    lucide-react.d.ts
+  utils/
+    date.ts
+    motion.ts
+    storage.ts
+```

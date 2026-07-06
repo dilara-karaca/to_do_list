@@ -3,6 +3,8 @@ export type Task = {
     text: string;
     completed: boolean;
     createdAt: string;
+    description?: string;
+    userId?: string;
 };
 
 export type TaskMap = Record<string, Task[]>;
