@@ -71,6 +71,10 @@ export function AuthPage() {
             return;
         }
 
+        if (result.ok && mode === 'login' && isSupabaseConfigured) {
+            return;
+        }
+
         setSubmitting(false);
 
         if (result.ok && mode === 'register') {
@@ -85,6 +89,22 @@ export function AuthPage() {
             setMode('reset');
         }
     };
+
+    const submitLabel = submitting
+        ? mode === 'login'
+            ? 'Giriş yapılıyor...'
+            : mode === 'register'
+                ? 'Kayıt oluşturuluyor...'
+                : 'Gönderiliyor...'
+        : mode === 'login'
+            ? 'Giriş Yap'
+            : mode === 'register'
+                ? 'Kayıt Ol'
+                : 'Mail Gönder';
+
+    if (authLoading && !submitting) {
+        return <div className="grid min-h-screen place-items-center text-slate-500">Oturum kontrol ediliyor...</div>;
+    }
 
     if (!authLoading && authenticated && mode === 'login') {
         return <Navigate to={redirectTo} replace />;
@@ -178,7 +198,7 @@ export function AuthPage() {
                             ) : null}
 
                             <button type="submit" disabled={submitting} className="h-12 w-full rounded-2xl bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">
-                                {submitting ? 'İşleniyor...' : mode === 'login' ? 'Giriş Yap' : mode === 'register' ? 'Kayıt Ol' : 'Mail Gönder'}
+                                {submitLabel}
                             </button>
                         </form>
 

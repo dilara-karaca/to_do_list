@@ -22,16 +22,29 @@ const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve,
 
 const PROFILE_FETCH_TIMEOUT_MS = 5000;
 
-const isFatalProfileError = (message: string) =>
-    /failed to fetch|network|520|502|503|504|cors|timeout/i.test(message);
-
 export async function fetchUserProfile(userId: string): Promise<AppUser | null> {
     if (!isSupabaseConfigured || !supabase) {
         return null;
     }
 
     try {
-        const result = await Promise.race([
+        const rpcResult = await Promise.race([
+            supabase.rpc('get_own_profile'),
+            wait(PROFILE_FETCH_TIMEOUT_MS).then(() => ({ timedOut: true as const })),
+        ]);
+
+        if (!('timedOut' in rpcResult)) {
+            const { data, error } = rpcResult;
+
+            if (!error && data && typeof data === 'object' && 'id' in data) {
+                const row = data as DbUserRow;
+                if (row.id === userId) {
+                    return mapDbUser(row);
+                }
+            }
+        }
+
+        const tableResult = await Promise.race([
             supabase
                 .from('users')
                 .select('*')
@@ -40,30 +53,20 @@ export async function fetchUserProfile(userId: string): Promise<AppUser | null> 
             wait(PROFILE_FETCH_TIMEOUT_MS).then(() => ({ timedOut: true as const })),
         ]);
 
-        if ('timedOut' in result) {
-            console.warn('[auth] fetchUserProfile timed out', { userId });
+        if ('timedOut' in tableResult) {
             return null;
         }
 
-        const { data, error } = result;
+        const { data, error } = tableResult;
 
-        if (error) {
-            console.warn('[auth] fetchUserProfile failed', error.message, { userId });
+        if (error || !data) {
             return null;
         }
 
-        if (data) {
-            return mapDbUser(data as DbUserRow);
-        }
-    } catch (error) {
-        const message = error instanceof Error ? error.message : 'unknown error';
-        console.warn('[auth] fetchUserProfile crashed', message, { userId });
-        if (isFatalProfileError(message)) {
-            return null;
-        }
+        return mapDbUser(data as DbUserRow);
+    } catch {
+        return null;
     }
-
-    return null;
 }
 
 export async function ensureUserProfile(user: AppUser): Promise<AppUser | null> {
@@ -105,6 +108,12 @@ export async function ensureUserProfile(user: AppUser): Promise<AppUser | null> 
 export async function fetchAdminUsers(): Promise<AppUser[]> {
     if (!isSupabaseConfigured || !supabase) {
         return [];
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_admin_users');
+
+    if (!rpcError && rpcData) {
+        return (rpcData as DbUserRow[]).map(mapDbUser);
     }
 
     const { data, error } = await supabase

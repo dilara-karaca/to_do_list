@@ -1,8 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { authRedirectUrl, AVATAR_BUCKET, isSupabaseConfigured, resetPasswordRedirectUrl, supabase } from '../lib/supabase';
 import type { AppUser, AuthSessionState, UserRole } from '../types/auth';
-import { fetchAdminUsers, ensureUserProfile, fetchUserProfile, updateAdminUser } from '../lib/adminService';
+import { fetchAdminUsers, fetchUserProfile, updateAdminUser } from '../lib/adminService';
 import { getAvatarExtension, prepareAvatarImage, readFileAsDataUrl, validateAvatarFile } from '../utils/avatar';
 import { getResetCooldownRemaining, mapAuthErrorMessage, setResetCooldown } from '../utils/authErrors';
 import { mockUsers } from './mockData';
@@ -12,14 +12,13 @@ type AuthContextValue = AuthSessionState & {
     signUp: (payload: { fullName: string; email: string; password: string; passwordConfirm: string; kvkkConsent: boolean }) => Promise<{ ok: boolean; message: string }>;
     requestPasswordReset: (email: string) => Promise<{ ok: boolean; message: string }>;
     changePassword: (payload: { currentPassword: string; newPassword: string; newPasswordConfirm: string }) => Promise<{ ok: boolean; message: string }>;
-    signOut: () => void;
+    signOut: () => Promise<void>;
     updateRole: (userId: string, role: UserRole) => void;
     updateProfile: (userId: string, changes: Partial<AppUser>) => void;
     uploadAvatar: (file: File) => Promise<{ ok: boolean; message: string }>;
     removeAvatar: () => Promise<{ ok: boolean; message: string }>;
     setEmailConfirmed: (userId: string, confirmed: boolean) => void;
     setActive: (userId: string, active: boolean) => void;
-    refreshUser: () => Promise<void>;
     users: AppUser[];
 };
 
@@ -88,6 +87,12 @@ const clearStoredAuthCache = () => {
     try {
         localStorage.removeItem(storageKey);
         localStorage.removeItem(profileStorageKey);
+
+        for (const key of Object.keys(localStorage)) {
+            if (key.startsWith('sb-') && key.includes('-auth-token')) {
+                localStorage.removeItem(key);
+            }
+        }
     } catch {
         // Ignore local cache cleanup errors.
     }
@@ -115,7 +120,7 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
         id: sessionUser.id,
         fullName: String(sessionUser.user_metadata?.full_name ?? sessionUser.email ?? ''),
         email: sessionUser.email ?? '',
-        role: 'user',
+        role: storedProfile?.role === 'admin' ? 'admin' : 'user',
         emailConfirmed: Boolean(sessionUser.email_confirmed_at),
         kvkkConsent: Boolean(sessionUser.user_metadata?.kvkk_consent),
         kvkkConsentAt: typeof sessionUser.user_metadata?.kvkk_consent_at === 'string'
@@ -124,8 +129,8 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
         createdAt: sessionUser.created_at,
         updatedAt: sessionUser.updated_at ?? sessionUser.created_at,
         lastSignInAt: sessionUser.last_sign_in_at ?? null,
-        active: true,
-        avatarUrl: avatarFromSession,
+        active: storedProfile?.active ?? true,
+        avatarUrl: avatarFromSession || storedProfile?.avatarUrl || null,
     };
 
     if (!storedProfile) {
@@ -136,22 +141,15 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
         ...fromSession,
         fullName: storedProfile.fullName || fromSession.fullName,
         email: storedProfile.email || fromSession.email,
-        active: storedProfile.active ?? fromSession.active,
-        emailConfirmed: fromSession.emailConfirmed || storedProfile.emailConfirmed,
+        role: storedProfile.role === 'admin' ? 'admin' : fromSession.role,
         kvkkConsent: storedProfile.kvkkConsent || fromSession.kvkkConsent,
         kvkkConsentAt: storedProfile.kvkkConsentAt ?? fromSession.kvkkConsentAt,
-        avatarUrl: avatarFromSession || storedProfile.avatarUrl || null,
     };
 };
 
 const hydrateAppUser = async (sessionUser: User): Promise<AppUser> => {
-    const storedProfile = getStoredProfile(sessionUser.id);
-    const baseUser = buildAppUserFromSession(sessionUser, storedProfile);
-    let dbUser = await fetchUserProfile(sessionUser.id);
-
-    if (!dbUser) {
-        dbUser = await ensureUserProfile(baseUser);
-    }
+    const baseUser = buildAppUserFromSession(sessionUser, getStoredProfile(sessionUser.id));
+    const dbUser = await fetchUserProfile(sessionUser.id);
 
     if (!dbUser) {
         return baseUser;
@@ -164,69 +162,111 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<AppUser | null>(null);
     const [users, setUsers] = useState<AppUser[]>(() => (isSupabaseConfigured ? [] : readUsers()));
     const [loading, setLoading] = useState(true);
+    const hydrateInFlightRef = useRef<string | null>(null);
 
-    const applySessionUser = async (sessionUser: User | null) => {
+    const applySessionUser = useCallback(async (sessionUser: User | null) => {
         if (!sessionUser) {
             setUser(null);
             return;
         }
 
-        const fallbackUser = buildAppUserFromSession(sessionUser, getStoredProfile(sessionUser.id));
-        setUsers((currentUsers) => mergeUsers(currentUsers, fallbackUser));
-        setUser(fallbackUser);
+        if (hydrateInFlightRef.current === sessionUser.id) {
+            return;
+        }
 
-        let nextUser = fallbackUser;
+        hydrateInFlightRef.current = sessionUser.id;
 
         try {
-            nextUser = await hydrateAppUser(sessionUser);
+            const nextUser = await hydrateAppUser(sessionUser);
+            setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
+            setUser(nextUser);
+            saveStoredProfile(nextUser);
+
+            if (nextUser.role === 'admin') {
+                void fetchAdminUsers()
+                    .then((adminUsers) => {
+                        if (adminUsers.length) {
+                            setUsers(adminUsers);
+                        }
+                    })
+                    .catch(() => {
+                        // Admin list is optional.
+                    });
+            }
         } catch (error) {
             if (import.meta.env.DEV) {
-                console.warn('[auth] hydrateAppUser failed', error);
+                console.warn('[auth] applySessionUser failed', error);
             }
-        }
 
-        setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
-        setUser(nextUser);
-        saveStoredProfile(nextUser);
-
-        if (nextUser.role === 'admin') {
-            void fetchAdminUsers()
-                .then((adminUsers) => {
-                    if (adminUsers.length) {
-                        setUsers(adminUsers);
-                    }
-                })
-                .catch((error) => {
-                    if (import.meta.env.DEV) {
-                        console.warn('[auth] fetchAdminUsers failed', error);
-                    }
-                });
+            const fallbackUser = buildAppUserFromSession(sessionUser, getStoredProfile(sessionUser.id));
+            setUsers((currentUsers) => mergeUsers(currentUsers, fallbackUser));
+            setUser(fallbackUser);
+            saveStoredProfile(fallbackUser);
+        } finally {
+            hydrateInFlightRef.current = null;
         }
-    };
+    }, []);
 
     useEffect(() => {
-        if (isSupabaseConfigured && supabase) {
-            const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
+        const client = supabase;
+
+        if (isSupabaseConfigured && client) {
+            let active = true;
+
+            const bootstrap = async () => {
+                const { data, error } = await client.auth.getSession();
+
+                if (!active) {
+                    return;
+                }
+
+                if (error) {
+                    setUser(null);
+                    setLoading(false);
+                    return;
+                }
+
+                if (!data.session?.user) {
+                    setUser(null);
+                    setLoading(false);
+                    return;
+                }
+
+                await applySessionUser(data.session.user);
+
+                if (active) {
+                    setLoading(false);
+                }
+            };
+
+            void bootstrap();
+
+            const { data: subscription } = client.auth.onAuthStateChange((event, session) => {
                 if (import.meta.env.DEV) {
                     console.log('[auth] onAuthStateChange', event, session?.user?.email);
+                }
+
+                if (event === 'INITIAL_SESSION') {
+                    return;
                 }
 
                 const sessionUser = session?.user ?? null;
 
                 if (!sessionUser) {
                     setUser(null);
-                } else {
-                    window.setTimeout(() => {
-                        void applySessionUser(sessionUser);
-                    }, 100);
+                    setLoading(false);
+                    return;
                 }
 
-                if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
-                    setLoading(false);
+                if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+                    window.setTimeout(() => {
+                        void applySessionUser(sessionUser);
+                    }, 0);
                 }
             });
 
             return () => {
+                active = false;
                 subscription.subscription.unsubscribe();
             };
         }
@@ -245,44 +285,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [applySessionUser]);
 
     useEffect(() => {
         if (!isSupabaseConfigured) {
             localStorage.setItem(storageKey, JSON.stringify({ userId: user?.id ?? null, users }));
         }
     }, [user, users]);
-
-    const refreshUser = useCallback(async () => {
-        const client = supabase;
-        if (!isSupabaseConfigured || !client) {
-            return;
-        }
-
-        window.setTimeout(() => {
-            void (async () => {
-                const { data } = await client.auth.getUser();
-                if (!data.user) {
-                    return;
-                }
-
-                await applySessionUser(data.user);
-            })();
-        }, 0);
-    }, []);
-
-    useEffect(() => {
-        if (!isSupabaseConfigured || !user) {
-            return;
-        }
-
-        const onFocus = () => {
-            void refreshUser();
-        };
-
-        window.addEventListener('focus', onFocus);
-        return () => window.removeEventListener('focus', onFocus);
-    }, [refreshUser, user?.id]);
 
     const signIn = async (email: string, password: string) => {
         if (isSupabaseConfigured && supabase) {
@@ -453,12 +462,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const signOut = async () => {
         if (isSupabaseConfigured && supabase) {
-            await supabase.auth.signOut();
+            await supabase.auth.signOut({ scope: 'global' });
         }
 
         clearStoredAuthCache();
         setUser(null);
         setUsers(isSupabaseConfigured ? [] : mockUsers);
+        setLoading(false);
     };
 
     const persistAdminChange = (userId: string, changes: Partial<AppUser>) => {
@@ -470,7 +480,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const updateRole = (userId: string, role: UserRole) => {
         persistAdminChange(userId, { role });
         setUsers((currentUsers) => currentUsers.map((candidate) => (candidate.id === userId ? { ...candidate, role, updatedAt: new Date().toISOString() } : candidate)));
-        setUser((currentUser) => (currentUser?.id === userId ? { ...currentUser, role } : currentUser));
+        setUser((currentUser) => {
+            if (currentUser?.id !== userId) {
+                return currentUser;
+            }
+
+            const nextUser = { ...currentUser, role };
+            saveStoredProfile(nextUser);
+            return nextUser;
+        });
     };
 
     const updateProfile = (userId: string, changes: Partial<AppUser>) => {
@@ -591,9 +609,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         removeAvatar,
         setEmailConfirmed,
         setActive,
-        refreshUser,
         users,
-    }), [loading, refreshUser, user, users]);
+    }), [loading, user, users]);
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
