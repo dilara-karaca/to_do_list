@@ -3,12 +3,13 @@ import { Eye, EyeOff } from 'lucide-react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { buildAuthTransferPath, parseAuthUrlParams } from '../utils/authSession';
 import { Motion } from '../utils/motion';
 
 type ViewMode = 'login' | 'register' | 'reset';
 
 export function AuthPage() {
-    const { authenticated, loading: authLoading, signIn, signUp, requestPasswordReset, signOut } = useAuth();
+    const { authenticated, loading: authLoading, signIn, signUp, requestPasswordReset } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
     const [mode, setMode] = useState<ViewMode>('login');
@@ -18,34 +19,29 @@ export function AuthPage() {
     const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
 
     const redirectTo = useMemo(() => {
-        const state = location.state as { from?: string } | null;
+        const state = location.state as { from?: string; message?: string } | null;
         return state?.from ?? '/planner';
     }, [location.state]);
 
-    useEffect(() => {
-        const hashParams = new URLSearchParams(window.location.hash.slice(1));
-        const searchParams = new URLSearchParams(window.location.search);
+    const loginMessage = useMemo(() => {
+        const state = location.state as { message?: string } | null;
+        return state?.message ?? '';
+    }, [location.state]);
 
-        if (hashParams.get('type') === 'recovery') {
-            navigate(`/auth/reset-password${window.location.search}${window.location.hash}`, { replace: true });
+    useEffect(() => {
+        const params = parseAuthUrlParams();
+
+        if (params.isRecovery || (params.tokenHash && params.type === 'recovery')) {
+            navigate(buildAuthTransferPath('/auth/reset-password'), { replace: true });
             return;
         }
 
-        const hasAuthParams =
-            window.location.hash.includes('access_token') ||
-            searchParams.has('code') ||
-            searchParams.has('token_hash');
-
-        if (hasAuthParams) {
-            navigate(`/auth/callback${window.location.search}${window.location.hash}`, { replace: true });
+        if (params.hasAuthParams) {
+            navigate(buildAuthTransferPath('/auth/callback'), { replace: true });
         }
     }, [navigate]);
 
     const changeMode = (nextMode: ViewMode) => {
-        if (nextMode === 'reset') {
-            void signOut();
-        }
-
         setMode(nextMode);
         setMessage('');
     };
@@ -55,10 +51,6 @@ export function AuthPage() {
         const formData = new FormData(event.currentTarget);
         setSubmitting(true);
 
-        if (mode === 'reset') {
-            await signOut();
-        }
-
         const result = mode === 'login'
             ? await signIn(String(formData.get('email') ?? ''), String(formData.get('password') ?? ''))
             : mode === 'register'
@@ -67,6 +59,7 @@ export function AuthPage() {
                     email: String(formData.get('email') ?? ''),
                     password: String(formData.get('password') ?? ''),
                     passwordConfirm: String(formData.get('passwordConfirm') ?? ''),
+                    kvkkConsent: formData.get('kvkkConsent') === 'yes',
                 })
                 : await requestPasswordReset(String(formData.get('email') ?? ''));
 
@@ -83,6 +76,10 @@ export function AuthPage() {
 
         if (result.ok && mode === 'reset') {
             setMode('login');
+        }
+
+        if (!result.ok && mode === 'reset') {
+            setMode('reset');
         }
     };
 
@@ -155,12 +152,36 @@ export function AuthPage() {
                                 </div>
                             ) : null}
 
+                            {mode === 'register' ? (
+                                <label className="flex items-start gap-3 rounded-2xl border border-white/70 bg-white/70 px-4 py-3 text-sm text-slate-700">
+                                    <input
+                                        name="kvkkConsent"
+                                        type="checkbox"
+                                        value="yes"
+                                        required
+                                        className="mt-1 h-4 w-4 rounded border-slate-300"
+                                    />
+                                    <span>
+                                        <details>
+                                            <summary className="cursor-pointer font-medium text-slate-900">KVKK Aydınlatma Metni</summary>
+                                            <p className="mt-2 text-xs leading-6 text-slate-600">
+                                                Planner kapsamında ad soyad, e-posta, profil fotoğrafı, görev/plan verileri ve oturum bilgileri;
+                                                hesap oluşturma, kimlik doğrulama ve hizmetin sunulması amaçlarıyla işlenir. Veriler yalnızca gerekli süre boyunca saklanır.
+                                            </p>
+                                        </details>
+                                        <span className="mt-2 block">Kişisel verilerimin işlenmesini onaylıyorum.</span>
+                                    </span>
+                                </label>
+                            ) : null}
+
                             <button type="submit" disabled={submitting} className="h-12 w-full rounded-2xl bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">
                                 {submitting ? 'İşleniyor...' : mode === 'login' ? 'Giriş Yap' : mode === 'register' ? 'Kayıt Ol' : 'Mail Gönder'}
                             </button>
                         </form>
 
-                        <div className="mt-4 min-h-6 text-sm text-slate-600">{message}</div>
+                        <div className={`mt-4 min-h-6 text-sm ${message && mode === 'reset' && !message.includes('gönderildi') ? 'text-rose-600' : 'text-slate-600'}`}>
+                            {message || loginMessage}
+                        </div>
                     </div>
                 </div>
             </Motion.main>

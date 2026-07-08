@@ -2,12 +2,14 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import type { User } from '@supabase/supabase-js';
 import { authRedirectUrl, AVATAR_BUCKET, isSupabaseConfigured, resetPasswordRedirectUrl, supabase } from '../lib/supabase';
 import type { AppUser, AuthSessionState, UserRole } from '../types/auth';
+import { fetchAdminUsers, fetchUserProfile, updateAdminUser } from '../lib/adminService';
 import { getAvatarExtension, prepareAvatarImage, readFileAsDataUrl, validateAvatarFile } from '../utils/avatar';
+import { getResetCooldownRemaining, mapAuthErrorMessage, setResetCooldown } from '../utils/authErrors';
 import { mockUsers } from './mockData';
 
 type AuthContextValue = AuthSessionState & {
     signIn: (email: string, password: string) => Promise<{ ok: boolean; message: string }>;
-    signUp: (payload: { fullName: string; email: string; password: string; passwordConfirm: string }) => Promise<{ ok: boolean; message: string }>;
+    signUp: (payload: { fullName: string; email: string; password: string; passwordConfirm: string; kvkkConsent: boolean }) => Promise<{ ok: boolean; message: string }>;
     requestPasswordReset: (email: string) => Promise<{ ok: boolean; message: string }>;
     changePassword: (payload: { currentPassword: string; newPassword: string; newPasswordConfirm: string }) => Promise<{ ok: boolean; message: string }>;
     signOut: () => void;
@@ -92,6 +94,10 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
         email: sessionUser.email ?? '',
         role: (sessionUser.app_metadata?.role as UserRole | undefined) ?? 'user',
         emailConfirmed: Boolean(sessionUser.email_confirmed_at),
+        kvkkConsent: Boolean(sessionUser.user_metadata?.kvkk_consent),
+        kvkkConsentAt: typeof sessionUser.user_metadata?.kvkk_consent_at === 'string'
+            ? sessionUser.user_metadata.kvkk_consent_at
+            : null,
         createdAt: sessionUser.created_at,
         updatedAt: sessionUser.updated_at ?? sessionUser.created_at,
         lastSignInAt: sessionUser.last_sign_in_at ?? null,
@@ -107,6 +113,11 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
         ...storedProfile,
         ...fromSession,
         fullName: storedProfile.fullName || fromSession.fullName,
+        role: storedProfile.role || fromSession.role,
+        active: storedProfile.active ?? fromSession.active,
+        emailConfirmed: fromSession.emailConfirmed || storedProfile.emailConfirmed,
+        kvkkConsent: storedProfile.kvkkConsent || fromSession.kvkkConsent,
+        kvkkConsentAt: storedProfile.kvkkConsentAt ?? fromSession.kvkkConsentAt,
         avatarUrl: avatarFromSession || storedProfile.avatarUrl || null,
     };
 };
@@ -118,18 +129,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         if (isSupabaseConfigured && supabase) {
-            const applySessionUser = (sessionUser: User | null) => {
+            const applySessionUser = async (sessionUser: User | null) => {
                 if (!sessionUser) {
                     setUser(null);
                     return;
                 }
 
                 const storedProfile = getStoredProfile(sessionUser.id);
-                const nextUser = buildAppUserFromSession(sessionUser, storedProfile);
+                let nextUser = buildAppUserFromSession(sessionUser, storedProfile);
+                const dbUser = await fetchUserProfile(sessionUser.id);
+
+                if (dbUser) {
+                    nextUser = {
+                        ...nextUser,
+                        ...dbUser,
+                        fullName: dbUser.fullName || nextUser.fullName,
+                        avatarUrl: nextUser.avatarUrl ?? dbUser.avatarUrl ?? null,
+                    };
+                }
 
                 setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
                 setUser(nextUser);
                 saveStoredProfile(nextUser);
+
+                if (nextUser.role === 'admin') {
+                    const adminUsers = await fetchAdminUsers();
+                    if (adminUsers.length) {
+                        setUsers(adminUsers);
+                    }
+                }
             };
 
             const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
@@ -137,7 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     console.log('[auth] onAuthStateChange', event, session?.user?.email);
                 }
 
-                applySessionUser(session?.user ?? null);
+                void applySessionUser(session?.user ?? null);
 
                 if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
                     setLoading(false);
@@ -210,11 +238,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { ok: true, message: 'Giriş başarılı.' };
     };
 
-    const signUp = async ({ fullName, email, password, passwordConfirm }: { fullName: string; email: string; password: string; passwordConfirm: string }) => {
+    const signUp = async ({ fullName, email, password, passwordConfirm, kvkkConsent }: { fullName: string; email: string; password: string; passwordConfirm: string; kvkkConsent: boolean }) => {
         if (!fullName.trim()) return { ok: false, message: 'Ad soyad gerekli.' };
         if (!emailPattern.test(email)) return { ok: false, message: 'Geçerli bir e-posta girin.' };
+        if (!kvkkConsent) return { ok: false, message: 'Kayıt olmak için KVKK metnini onaylamalısın.' };
         if (password !== passwordConfirm) return { ok: false, message: 'Şifreler eşleşmiyor.' };
         if (!isStrongPassword(password)) return { ok: false, message: 'Şifre güçlü değil.' };
+
+        const consentAt = new Date().toISOString();
 
         if (isSupabaseConfigured && supabase) {
             const { data, error } = await supabase.auth.signUp({
@@ -224,7 +255,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     emailRedirectTo: authRedirectUrl(),
                     data: {
                         full_name: fullName,
-                        role: 'user',
+                        kvkk_consent: true,
+                        kvkk_consent_at: consentAt,
                     },
                 },
             });
@@ -240,7 +272,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             if (data.user) {
                 const nextUser = buildAppUserFromSession(data.user, null);
-                const profileUser: AppUser = { ...nextUser, fullName };
+                const profileUser: AppUser = {
+                    ...nextUser,
+                    fullName,
+                    kvkkConsent: true,
+                    kvkkConsentAt: consentAt,
+                };
 
                 setUsers((currentUsers) => mergeUsers(currentUsers, profileUser));
                 saveStoredProfile(profileUser);
@@ -256,6 +293,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             email,
             role: 'user',
             emailConfirmed: false,
+            kvkkConsent: true,
+            kvkkConsentAt: consentAt,
             createdAt: now,
             updatedAt: now,
             lastSignInAt: null,
@@ -268,19 +307,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const requestPasswordReset = async (email: string) => {
+        const normalizedEmail = email.trim().toLowerCase();
+
+        if (!emailPattern.test(normalizedEmail)) {
+            return { ok: false, message: 'Geçerli bir e-posta girin.' };
+        }
+
+        const cooldownRemaining = getResetCooldownRemaining(normalizedEmail);
+        if (cooldownRemaining > 0) {
+            const seconds = Math.ceil(cooldownRemaining / 1000);
+            return { ok: false, message: `Yeni mail isteği için ${seconds} saniye beklemen gerekiyor.` };
+        }
+
         if (isSupabaseConfigured && supabase) {
-            const { error } = await supabase.auth.resetPasswordForEmail(email, {
+            const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
                 redirectTo: resetPasswordRedirectUrl(),
             });
 
             if (error) {
-                return { ok: false, message: error.message };
+                return {
+                    ok: false,
+                    message: mapAuthErrorMessage(error.message, error.code),
+                };
             }
 
-            return { ok: true, message: 'Şifre sıfırlama maili gönderildi.' };
+            setResetCooldown(normalizedEmail);
+            return { ok: true, message: 'Şifre sıfırlama maili gönderildi. Gelen kutunu ve spam klasörünü kontrol et.' };
         }
 
-        const exists = users.some((candidate) => candidate.email.toLowerCase() === email.toLowerCase());
+        const exists = users.some((candidate) => candidate.email.toLowerCase() === normalizedEmail);
         return { ok: exists, message: exists ? 'Şifre sıfırlama bağlantısı gönderildi.' : 'E-posta bulunamadı.' };
     };
 
@@ -327,7 +382,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
     };
 
+    const persistAdminChange = (userId: string, changes: Partial<AppUser>) => {
+        if (isSupabaseConfigured) {
+            void updateAdminUser(userId, changes);
+        }
+    };
+
     const updateRole = (userId: string, role: UserRole) => {
+        persistAdminChange(userId, { role });
         setUsers((currentUsers) => currentUsers.map((candidate) => (candidate.id === userId ? { ...candidate, role, updatedAt: new Date().toISOString() } : candidate)));
         setUser((currentUser) => (currentUser?.id === userId ? { ...currentUser, role } : currentUser));
     };
@@ -425,8 +487,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { ok: true, message: 'Profil fotoğrafı kaldırıldı.' };
     };
 
-    const setEmailConfirmed = (userId: string, confirmed: boolean) => updateProfile(userId, { emailConfirmed: confirmed });
-    const setActive = (userId: string, active: boolean) => updateProfile(userId, { active });
+    const setEmailConfirmed = (userId: string, confirmed: boolean) => {
+        persistAdminChange(userId, { emailConfirmed: confirmed });
+        updateProfile(userId, { emailConfirmed: confirmed });
+    };
+
+    const setActive = (userId: string, active: boolean) => {
+        persistAdminChange(userId, { active });
+        updateProfile(userId, { active });
+    };
 
     const value = useMemo<AuthContextValue>(() => ({
         user,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, KeyRound, LogOut, User } from 'lucide-react';
+import { ChevronDown, KeyRound, LogOut, Shield, User } from 'lucide-react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { UserAvatar } from '../components/UserAvatar/UserAvatar';
 import { useAuth } from '../auth/AuthProvider';
@@ -69,6 +69,9 @@ export function AppShell() {
                     <NavLink className={({ isActive }) => `rounded-full px-4 py-2 text-sm transition ${isActive ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-white/70'}`} to="/planner">Planner</NavLink>
                     <NavLink className={({ isActive }) => `rounded-full px-4 py-2 text-sm transition ${isActive ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-white/70'}`} to="/profile">Profil</NavLink>
                     <NavLink className={({ isActive }) => `rounded-full px-4 py-2 text-sm transition ${isActive ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-white/70'}`} to="/settings">Ayarlar</NavLink>
+                    {user?.role === 'admin' ? (
+                        <NavLink className={({ isActive }) => `rounded-full px-4 py-2 text-sm transition ${isActive ? 'bg-rose-600 text-white' : 'text-rose-700 hover:bg-rose-50'}`} to="/admin">Admin</NavLink>
+                    ) : null}
                 </nav>
 
                 <div ref={menuRef} className="relative">
@@ -112,6 +115,9 @@ export function AppShell() {
                                 <div className="p-2">
                                     <MenuLink to="/profile" icon={User} label="Profil" onNavigate={() => setMenuOpen(false)} />
                                     <MenuLink to="/settings" icon={KeyRound} label="Ayarlar" onNavigate={() => setMenuOpen(false)} />
+                                    {user?.role === 'admin' ? (
+                                        <MenuLink to="/admin" icon={Shield} label="Admin Panel" onNavigate={() => setMenuOpen(false)} />
+                                    ) : null}
                                 </div>
 
                                 <div className="border-t border-slate-100 p-2">

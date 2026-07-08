@@ -6,6 +6,8 @@ export type AppUser = {
     email: string;
     role: UserRole;
     emailConfirmed: boolean;
+    kvkkConsent: boolean;
+    kvkkConsentAt?: string | null;
     createdAt: string;
     updatedAt: string;
     lastSignInAt?: string | null;

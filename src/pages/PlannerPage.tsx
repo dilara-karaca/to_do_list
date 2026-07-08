@@ -1,11 +1,14 @@
 import { AnimatePresence } from 'framer-motion';
 import { format, parseISO, subMonths } from 'date-fns';
 import { tr } from 'date-fns/locale';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Calendar from '../components/Calendar/Calendar';
 import DayModal from '../components/DayModal/DayModal';
 import Header from '../components/Header/Header';
+import { useAuth } from '../auth/AuthProvider';
 import { defaultSelectedDate } from '../data/defaultDate';
+import { fetchUserTasks, syncTaskMapForUser } from '../lib/adminService';
+import { isSupabaseConfigured } from '../lib/supabase';
 import type { Task } from '../types/task';
 import type { TaskMap } from '../types/task';
 import { dateKey, isPastDate } from '../utils/date';
@@ -14,11 +17,16 @@ import { loadTaskMap, saveSelectedDate, saveTaskMap } from '../utils/storage';
 
 const storageDateKey = 'planner.selected-date';
 
+const collectTaskIds = (taskMap: TaskMap) => new Set(Object.values(taskMap).flat().map((task) => task.id));
+
 export function PlannerPage() {
+    const { user } = useAuth();
     const [currentMonth, setCurrentMonth] = useState(() => new Date(defaultSelectedDate.getFullYear(), defaultSelectedDate.getMonth(), 1));
     const [selectedDate, setSelectedDate] = useState(defaultSelectedDate);
     const [taskMap, setTaskMap] = useState<TaskMap>(() => loadTaskMap());
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [remoteReady, setRemoteReady] = useState(false);
+    const previousTaskIdsRef = useRef<Set<string>>(collectTaskIds(loadTaskMap()));
 
     useEffect(() => {
         const storedSelected = localStorage.getItem(storageDateKey);
@@ -30,8 +38,60 @@ export function PlannerPage() {
     }, []);
 
     useEffect(() => {
+        if (!user?.id || !isSupabaseConfigured) {
+            setRemoteReady(true);
+            return;
+        }
+
+        let cancelled = false;
+
+        const loadRemoteTasks = async () => {
+            const remoteTasks = await fetchUserTasks(user.id);
+            if (cancelled) {
+                return;
+            }
+
+            if (Object.keys(remoteTasks).length) {
+                setTaskMap(remoteTasks);
+                previousTaskIdsRef.current = collectTaskIds(remoteTasks);
+                setRemoteReady(true);
+                return;
+            }
+
+            const localTasks = loadTaskMap();
+            if (Object.keys(localTasks).length) {
+                await syncTaskMapForUser(user.id, localTasks, previousTaskIdsRef.current);
+                previousTaskIdsRef.current = collectTaskIds(localTasks);
+            }
+
+            setRemoteReady(true);
+        };
+
+        setRemoteReady(false);
+        void loadRemoteTasks();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [user?.id]);
+
+    useEffect(() => {
         saveTaskMap(taskMap);
     }, [taskMap]);
+
+    useEffect(() => {
+        if (!user?.id || !isSupabaseConfigured || !remoteReady) {
+            return;
+        }
+
+        const timeoutId = window.setTimeout(() => {
+            void syncTaskMapForUser(user.id, taskMap, previousTaskIdsRef.current).then(() => {
+                previousTaskIdsRef.current = collectTaskIds(taskMap);
+            });
+        }, 700);
+
+        return () => window.clearTimeout(timeoutId);
+    }, [taskMap, user?.id, remoteReady]);
 
     useEffect(() => {
         saveSelectedDate(dateKey(selectedDate));

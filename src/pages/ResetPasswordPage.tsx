@@ -2,6 +2,7 @@ import { Eye, EyeOff, KeyRound } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { clearAuthParamsFromUrl, establishRecoverySession } from '../utils/authSession';
 import { Motion } from '../utils/motion';
 
 const isStrongPassword = (password: string) =>
@@ -9,89 +10,46 @@ const isStrongPassword = (password: string) =>
 
 export function ResetPasswordPage() {
     const navigate = useNavigate();
-    const handledRef = useRef(false);
+    const initializedRef = useRef(false);
     const [ready, setReady] = useState(false);
     const [loading, setLoading] = useState(false);
     const [statusMessage, setStatusMessage] = useState('Bağlantı doğrulanıyor...');
+    const [statusType, setStatusType] = useState<'loading' | 'error'>('loading');
     const [formMessage, setFormMessage] = useState('');
     const [formMessageType, setFormMessageType] = useState<'success' | 'error'>('success');
     const [showPassword, setShowPassword] = useState(false);
     const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
 
     useEffect(() => {
+        if (initializedRef.current) {
+            return;
+        }
+
+        initializedRef.current = true;
+
         const client = supabase;
         if (!client) {
+            setStatusType('error');
             setStatusMessage('Supabase yapılandırılmamış.');
             return;
         }
 
-        let unsubscribe: (() => void) | undefined;
+        const init = async () => {
+            const result = await establishRecoverySession(client);
 
-        const markReady = () => {
-            if (handledRef.current) {
+            if (!result.ok) {
+                setStatusType('error');
+                setStatusMessage(result.message ?? 'Şifre sıfırlama bağlantısı geçersiz.');
                 return;
             }
 
-            handledRef.current = true;
+            clearAuthParamsFromUrl('/auth/reset-password');
             setReady(true);
             setStatusMessage('');
-            window.history.replaceState(null, '', '/auth/reset-password');
-        };
-
-        const fail = (message: string) => {
-            setStatusMessage(message);
-            window.setTimeout(() => navigate('/login', { replace: true }), 4000);
-        };
-
-        const init = async () => {
-            const hashParams = new URLSearchParams(window.location.hash.slice(1));
-            const query = new URLSearchParams(window.location.search);
-            const code = query.get('code');
-
-            if (hashParams.get('type') === 'recovery' || hashParams.get('access_token')) {
-                const { data, error } = await client.auth.getSession();
-                if (!error && data.session) {
-                    markReady();
-                    return;
-                }
-            }
-
-            if (code) {
-                const { error } = await client.auth.exchangeCodeForSession(code);
-                if (error) {
-                    fail('Şifre sıfırlama bağlantısı geçersiz veya süresi dolmuş. Lütfen yeni bir mail iste.');
-                    return;
-                }
-
-                markReady();
-                return;
-            }
-
-            const { data: subscription } = client.auth.onAuthStateChange((event, session) => {
-                if ((event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') && session) {
-                    markReady();
-                }
-            });
-
-            unsubscribe = () => subscription.subscription.unsubscribe();
-
-            const { data, error } = await client.auth.getSession();
-            if (!error && data.session) {
-                markReady();
-                return;
-            }
-
-            if (!window.location.hash.includes('access_token') && !code) {
-                fail('Şifre sıfırlama bağlantısı bulunamadı. Lütfen maildeki linki tekrar dene.');
-            }
         };
 
         void init();
-
-        return () => {
-            unsubscribe?.();
-        };
-    }, [navigate]);
+    }, []);
 
     const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -122,17 +80,19 @@ export function ResetPasswordPage() {
 
         const { error } = await client.auth.updateUser({ password: newPassword });
 
-        setLoading(false);
-
         if (error) {
+            setLoading(false);
             setFormMessage(error.message);
             setFormMessageType('error');
             return;
         }
 
-        setFormMessage('Şifren güncellendi. Giriş sayfasına yönlendiriliyorsun...');
-        setFormMessageType('success');
-        window.setTimeout(() => navigate('/login', { replace: true }), 2000);
+        await client.auth.signOut();
+        setLoading(false);
+        navigate('/login', {
+            replace: true,
+            state: { message: 'Şifren güncellendi. Yeni şifrenle giriş yapabilirsin.' },
+        });
     };
 
     if (!isSupabaseConfigured) {
@@ -145,8 +105,15 @@ export function ResetPasswordPage() {
 
     if (!ready) {
         return (
-            <div className="grid min-h-screen place-items-center px-4 text-slate-500">
-                {statusMessage}
+            <div className="grid min-h-screen place-items-center px-4 text-center">
+                <div className={`max-w-md text-sm ${statusType === 'error' ? 'text-rose-600' : 'text-slate-500'}`}>
+                    {statusMessage}
+                </div>
+                {statusType === 'error' ? (
+                    <Link to="/login" className="mt-4 text-sm font-medium text-slate-800 hover:underline">
+                        Giriş sayfasına dön ve yeni mail iste
+                    </Link>
+                ) : null}
             </div>
         );
     }

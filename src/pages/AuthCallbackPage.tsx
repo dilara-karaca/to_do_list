@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { buildAuthTransferPath, clearAuthParamsFromUrl, establishRecoverySession, parseAuthUrlParams } from '../utils/authSession';
 
 export function AuthCallbackPage() {
     const navigate = useNavigate();
@@ -14,6 +15,13 @@ export function AuthCallbackPage() {
             return;
         }
 
+        const params = parseAuthUrlParams();
+
+        if (params.isRecovery || (params.tokenHash && params.type === 'recovery')) {
+            navigate(buildAuthTransferPath('/auth/reset-password'), { replace: true });
+            return;
+        }
+
         let unsubscribe: (() => void) | undefined;
 
         const finish = async () => {
@@ -23,37 +31,23 @@ export function AuthCallbackPage() {
 
             const { data, error } = await client.auth.getSession();
 
-            if (import.meta.env.DEV) {
-                console.log('[auth] getSession after callback', data.session);
-            }
-
             if (error || !data.session) {
                 return false;
             }
 
             handledRef.current = true;
-            window.history.replaceState(null, '', '/auth/callback');
+            clearAuthParamsFromUrl('/auth/callback');
             navigate('/planner', { replace: true });
             return true;
         };
 
         const fail = (errorMessage: string) => {
             setMessage(errorMessage);
-            window.setTimeout(() => navigate('/login', { replace: true }), 3000);
         };
 
         const handleCallback = async () => {
-            const hashParams = new URLSearchParams(window.location.hash.slice(1));
-            const query = new URLSearchParams(window.location.search);
-            const code = query.get('code');
-
-            if (hashParams.get('type') === 'recovery') {
-                navigate(`/auth/reset-password${window.location.search}${window.location.hash}`, { replace: true });
-                return;
-            }
-
-            if (code) {
-                const { error } = await client.auth.exchangeCodeForSession(code);
+            if (params.code) {
+                const { error } = await client.auth.exchangeCodeForSession(params.code);
                 if (error) {
                     fail(error.message);
                     return;
@@ -74,9 +68,19 @@ export function AuthCallbackPage() {
 
             unsubscribe = () => subscription.subscription.unsubscribe();
 
-            const hasHashToken = window.location.hash.includes('access_token');
-            const success = await finish();
-            if (!success && !hasHashToken) {
+            if (params.hasHashToken) {
+                const success = await finish();
+                if (!success) {
+                    const recoveryResult = await establishRecoverySession(client);
+                    if (recoveryResult.ok) {
+                        navigate(buildAuthTransferPath('/auth/reset-password'), { replace: true });
+                        return;
+                    }
+                }
+                return;
+            }
+
+            if (!params.hasAuthParams) {
                 fail('Oturum oluşturulamadı. Lütfen tekrar giriş yapın.');
             }
         };
@@ -89,8 +93,11 @@ export function AuthCallbackPage() {
     }, [navigate]);
 
     return (
-        <div className="grid min-h-screen place-items-center text-slate-500">
-            {message}
+        <div className="grid min-h-screen place-items-center px-4 text-center text-slate-500">
+            <p>{message}</p>
+            <a href="/login" className="mt-4 text-sm font-medium text-slate-800 hover:underline">
+                Giriş sayfasına dön
+            </a>
         </div>
     );
 }
