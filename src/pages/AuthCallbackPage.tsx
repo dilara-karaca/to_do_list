@@ -8,7 +8,8 @@ export function AuthCallbackPage() {
     const handledRef = useRef(false);
 
     useEffect(() => {
-        if (!supabase) {
+        const client = supabase;
+        if (!client) {
             setMessage('Supabase yapılandırılmamış.');
             return;
         }
@@ -20,7 +21,7 @@ export function AuthCallbackPage() {
                 return true;
             }
 
-            const { data, error } = await supabase.auth.getSession();
+            const { data, error } = await client.auth.getSession();
 
             if (import.meta.env.DEV) {
                 console.log('[auth] getSession after callback', data.session);
@@ -46,7 +47,7 @@ export function AuthCallbackPage() {
             const code = query.get('code');
 
             if (code) {
-                const { error } = await supabase.auth.exchangeCodeForSession(code);
+                const { error } = await client.auth.exchangeCodeForSession(code);
                 if (error) {
                     fail(error.message);
                     return;
@@ -59,7 +60,7 @@ export function AuthCallbackPage() {
                 return;
             }
 
-            const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
+            const { data: subscription } = client.auth.onAuthStateChange((event, session) => {
                 if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
                     void finish();
                 }
