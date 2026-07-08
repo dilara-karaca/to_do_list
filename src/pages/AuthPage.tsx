@@ -8,7 +8,7 @@ import { Motion } from '../utils/motion';
 type ViewMode = 'login' | 'register' | 'reset';
 
 export function AuthPage() {
-    const { authenticated, signIn, signUp, requestPasswordReset } = useAuth();
+    const { authenticated, loading, signIn, signUp, requestPasswordReset, signOut } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
     const [mode, setMode] = useState<ViewMode>('login');
@@ -41,10 +41,23 @@ export function AuthPage() {
         }
     }, [navigate]);
 
+    const changeMode = (nextMode: ViewMode) => {
+        if (nextMode === 'reset') {
+            void signOut();
+        }
+
+        setMode(nextMode);
+        setMessage('');
+    };
+
     const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         const formData = new FormData(event.currentTarget);
         setLoading(true);
+
+        if (mode === 'reset') {
+            await signOut();
+        }
 
         const result = mode === 'login'
             ? await signIn(String(formData.get('email') ?? ''), String(formData.get('password') ?? ''))
@@ -67,9 +80,13 @@ export function AuthPage() {
         if (result.ok && mode === 'register') {
             setMode('login');
         }
+
+        if (result.ok && mode === 'reset') {
+            setMode('login');
+        }
     };
 
-    if (authenticated) {
+    if (!loading && authenticated && mode === 'login') {
         return <Navigate to={redirectTo} replace />;
     }
 
@@ -86,7 +103,7 @@ export function AuthPage() {
                     <div className="glass-panel rounded-[32px] p-5 shadow-2xl shadow-slate-900/10 backdrop-blur-2xl sm:p-7">
                         <div className="mb-5 flex gap-2 rounded-2xl bg-slate-900/5 p-1">
                             {(['login', 'register', 'reset'] as const).map((item) => (
-                                <button key={item} type="button" onClick={() => setMode(item)} className={`flex-1 rounded-2xl px-3 py-2 text-sm font-medium transition ${mode === item ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-white/70'}`}>
+                                <button key={item} type="button" onClick={() => changeMode(item)} className={`flex-1 rounded-2xl px-3 py-2 text-sm font-medium transition ${mode === item ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-white/70'}`}>
                                     {item === 'login' ? 'Giriş Yap' : item === 'register' ? 'Kayıt Ol' : 'Şifremi Unuttum'}
                                 </button>
                             ))}
