@@ -113,13 +113,29 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
         ...storedProfile,
         ...fromSession,
         fullName: storedProfile.fullName || fromSession.fullName,
-        role: storedProfile.role || fromSession.role,
         active: storedProfile.active ?? fromSession.active,
         emailConfirmed: fromSession.emailConfirmed || storedProfile.emailConfirmed,
         kvkkConsent: storedProfile.kvkkConsent || fromSession.kvkkConsent,
         kvkkConsentAt: storedProfile.kvkkConsentAt ?? fromSession.kvkkConsentAt,
         avatarUrl: avatarFromSession || storedProfile.avatarUrl || null,
     };
+};
+
+const hydrateAppUser = async (sessionUser: User): Promise<AppUser> => {
+    const storedProfile = getStoredProfile(sessionUser.id);
+    let nextUser = buildAppUserFromSession(sessionUser, storedProfile);
+    const dbUser = await fetchUserProfile(sessionUser.id);
+
+    if (dbUser) {
+        nextUser = {
+            ...nextUser,
+            ...dbUser,
+            fullName: dbUser.fullName || nextUser.fullName,
+            avatarUrl: nextUser.avatarUrl ?? dbUser.avatarUrl ?? null,
+        };
+    }
+
+    return nextUser;
 };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -135,18 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     return;
                 }
 
-                const storedProfile = getStoredProfile(sessionUser.id);
-                let nextUser = buildAppUserFromSession(sessionUser, storedProfile);
-                const dbUser = await fetchUserProfile(sessionUser.id);
-
-                if (dbUser) {
-                    nextUser = {
-                        ...nextUser,
-                        ...dbUser,
-                        fullName: dbUser.fullName || nextUser.fullName,
-                        avatarUrl: nextUser.avatarUrl ?? dbUser.avatarUrl ?? null,
-                    };
-                }
+                const nextUser = await hydrateAppUser(sessionUser);
 
                 setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
                 setUser(nextUser);
@@ -209,8 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 return { ok: false, message: error?.message ?? 'Giriş yapılamadı.' };
             }
 
-            const storedProfile = getStoredProfile(data.user.id);
-            const nextUser = buildAppUserFromSession(data.user, storedProfile);
+            const nextUser = await hydrateAppUser(data.user);
 
             setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
             setUser(nextUser);
