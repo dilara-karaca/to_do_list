@@ -47,17 +47,25 @@ alter table public.activity_logs enable row level security;
 
 create or replace function public.is_admin()
 returns boolean
-language sql
+language plpgsql
 security definer
 set search_path = public
 stable
 as $$
-    select exists (
+begin
+    perform set_config('row_security', 'off', true);
+
+    return exists (
         select 1
         from public.users
-        where id = auth.uid() and role = 'admin'
+        where id = auth.uid()
+          and role = 'admin'
     );
+end;
 $$;
+
+grant execute on function public.is_admin() to authenticated;
+grant execute on function public.is_admin() to service_role;
 
 drop policy if exists "users can read own profile" on public.users;
 create policy "users can read own profile"

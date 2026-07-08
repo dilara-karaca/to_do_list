@@ -145,10 +145,6 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
 };
 
 const hydrateAppUser = async (sessionUser: User): Promise<AppUser> => {
-    if (isSupabaseConfigured && supabase) {
-        await supabase.auth.getSession();
-    }
-
     const storedProfile = getStoredProfile(sessionUser.id);
     const baseUser = buildAppUserFromSession(sessionUser, storedProfile);
     let dbUser = await fetchUserProfile(sessionUser.id);
@@ -175,23 +171,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return;
         }
 
-        const nextUser = await hydrateAppUser(sessionUser);
+        const fallbackUser = buildAppUserFromSession(sessionUser, getStoredProfile(sessionUser.id));
+        setUsers((currentUsers) => mergeUsers(currentUsers, fallbackUser));
+        setUser(fallbackUser);
+
+        let nextUser = fallbackUser;
+
+        try {
+            nextUser = await hydrateAppUser(sessionUser);
+        } catch (error) {
+            if (import.meta.env.DEV) {
+                console.warn('[auth] hydrateAppUser failed', error);
+            }
+        }
 
         setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
         setUser(nextUser);
         saveStoredProfile(nextUser);
 
         if (nextUser.role === 'admin') {
-            try {
-                const adminUsers = await fetchAdminUsers();
-                if (adminUsers.length) {
-                    setUsers(adminUsers);
-                }
-            } catch (error) {
-                if (import.meta.env.DEV) {
-                    console.warn('[auth] fetchAdminUsers failed', error);
-                }
-            }
+            void fetchAdminUsers()
+                .then((adminUsers) => {
+                    if (adminUsers.length) {
+                        setUsers(adminUsers);
+                    }
+                })
+                .catch((error) => {
+                    if (import.meta.env.DEV) {
+                        console.warn('[auth] fetchAdminUsers failed', error);
+                    }
+                });
         }
     };
 
@@ -209,7 +218,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 } else {
                     window.setTimeout(() => {
                         void applySessionUser(sessionUser);
-                    }, 0);
+                    }, 100);
                 }
 
                 if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
@@ -245,16 +254,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, [user, users]);
 
     const refreshUser = useCallback(async () => {
-        if (!isSupabaseConfigured || !supabase) {
+        const client = supabase;
+        if (!isSupabaseConfigured || !client) {
             return;
         }
 
-        const { data } = await supabase.auth.getUser();
-        if (!data.user) {
-            return;
-        }
+        window.setTimeout(() => {
+            void (async () => {
+                const { data } = await client.auth.getUser();
+                if (!data.user) {
+                    return;
+                }
 
-        await applySessionUser(data.user);
+                await applySessionUser(data.user);
+            })();
+        }, 0);
     }, []);
 
     useEffect(() => {
@@ -272,31 +286,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const signIn = async (email: string, password: string) => {
         if (isSupabaseConfigured && supabase) {
-            const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+            const { error } = await supabase.auth.signInWithPassword({ email, password });
 
-            if (import.meta.env.DEV) {
-                console.log('[auth] signInWithPassword session', await supabase.auth.getSession());
-            }
-
-            if (error || !data.user) {
-                return { ok: false, message: error?.message ?? 'Giriş yapılamadı.' };
-            }
-
-            const nextUser = await hydrateAppUser(data.user);
-
-            setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
-            setUser(nextUser);
-            saveStoredProfile(nextUser);
-
-            if (nextUser.role === 'admin') {
-                try {
-                    const adminUsers = await fetchAdminUsers();
-                    if (adminUsers.length) {
-                        setUsers(adminUsers);
-                    }
-                } catch {
-                    // Admin list is optional during sign-in.
-                }
+            if (error) {
+                return { ok: false, message: error.message };
             }
 
             return { ok: true, message: 'Giriş başarılı.' };

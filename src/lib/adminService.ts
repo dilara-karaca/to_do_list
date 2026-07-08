@@ -20,33 +20,46 @@ const mapDbUser = (row: DbUserRow): AppUser => ({
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+const PROFILE_FETCH_TIMEOUT_MS = 5000;
+
+const isFatalProfileError = (message: string) =>
+    /failed to fetch|network|520|502|503|504|cors|timeout/i.test(message);
+
 export async function fetchUserProfile(userId: string): Promise<AppUser | null> {
     if (!isSupabaseConfigured || !supabase) {
         return null;
     }
 
-    await supabase.auth.getSession();
+    try {
+        const result = await Promise.race([
+            supabase
+                .from('users')
+                .select('*')
+                .eq('id', userId)
+                .maybeSingle(),
+            wait(PROFILE_FETCH_TIMEOUT_MS).then(() => ({ timedOut: true as const })),
+        ]);
 
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-        if (attempt > 0) {
-            await wait(150 * attempt);
+        if ('timedOut' in result) {
+            console.warn('[auth] fetchUserProfile timed out', { userId });
+            return null;
         }
 
-        const { data, error } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', userId)
-            .maybeSingle();
+        const { data, error } = result;
 
         if (error) {
-            if (import.meta.env.DEV) {
-                console.warn('[auth] fetchUserProfile failed', error.message, { userId, attempt });
-            }
-            continue;
+            console.warn('[auth] fetchUserProfile failed', error.message, { userId });
+            return null;
         }
 
         if (data) {
             return mapDbUser(data as DbUserRow);
+        }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'unknown error';
+        console.warn('[auth] fetchUserProfile crashed', message, { userId });
+        if (isFatalProfileError(message)) {
+            return null;
         }
     }
 

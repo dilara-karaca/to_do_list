@@ -10,7 +10,7 @@ import {
     Trash2,
     UserRound,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { AvatarUploadButton, UserAvatar } from '../components/UserAvatar/UserAvatar';
 import { useAuth } from '../auth/AuthProvider';
 import { Motion } from '../utils/motion';
@@ -33,15 +33,11 @@ const roleLabel: Record<string, string> = {
 };
 
 export function ProfilePage() {
-    const { user, uploadAvatar, removeAvatar, refreshUser } = useAuth();
+    const { user, uploadAvatar, removeAvatar } = useAuth();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [uploading, setUploading] = useState(false);
     const [message, setMessage] = useState('');
     const [messageType, setMessageType] = useState<'success' | 'error'>('success');
-
-    useEffect(() => {
-        void refreshUser();
-    }, [refreshUser]);
 
     const memberSince = useMemo(() => {
         if (!user?.createdAt) {

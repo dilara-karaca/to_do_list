@@ -64,11 +64,14 @@ export function AuthPage() {
                 : await requestPasswordReset(String(formData.get('email') ?? ''));
 
         setMessage(result.message);
-        setSubmitting(false);
 
-        if (result.ok && mode === 'login') {
+        if (result.ok && mode === 'login' && !isSupabaseConfigured) {
+            setSubmitting(false);
             navigate(redirectTo, { replace: true });
+            return;
         }
+
+        setSubmitting(false);
 
         if (result.ok && mode === 'register') {
             setMode('login');
