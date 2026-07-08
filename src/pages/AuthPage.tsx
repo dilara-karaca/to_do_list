@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
@@ -8,7 +8,7 @@ import { Motion } from '../utils/motion';
 type ViewMode = 'login' | 'register' | 'reset';
 
 export function AuthPage() {
-    const { authenticated, user, signIn, signUp, requestPasswordReset } = useAuth();
+    const { authenticated, signIn, signUp, requestPasswordReset } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
     const [mode, setMode] = useState<ViewMode>('login');
@@ -21,6 +21,17 @@ export function AuthPage() {
         const state = location.state as { from?: string } | null;
         return state?.from ?? '/planner';
     }, [location.state]);
+
+    useEffect(() => {
+        const hasAuthParams =
+            window.location.hash.includes('access_token') ||
+            new URLSearchParams(window.location.search).has('code') ||
+            new URLSearchParams(window.location.search).has('token_hash');
+
+        if (hasAuthParams) {
+            navigate(`/auth/callback${window.location.search}${window.location.hash}`, { replace: true });
+        }
+    }, [navigate]);
 
     const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -50,8 +61,8 @@ export function AuthPage() {
         }
     };
 
-    if (authenticated && user?.emailConfirmed) {
-        return <Navigate to="/planner" replace />;
+    if (authenticated) {
+        return <Navigate to={redirectTo} replace />;
     }
 
     return (

@@ -1,15 +1,20 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import type { User } from '@supabase/supabase-js';
+import { authRedirectUrl, AVATAR_BUCKET, isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { AppUser, AuthSessionState, UserRole } from '../types/auth';
+import { getAvatarExtension, prepareAvatarImage, readFileAsDataUrl, validateAvatarFile } from '../utils/avatar';
 import { mockUsers } from './mockData';
 
 type AuthContextValue = AuthSessionState & {
     signIn: (email: string, password: string) => Promise<{ ok: boolean; message: string }>;
     signUp: (payload: { fullName: string; email: string; password: string; passwordConfirm: string }) => Promise<{ ok: boolean; message: string }>;
     requestPasswordReset: (email: string) => Promise<{ ok: boolean; message: string }>;
+    changePassword: (payload: { currentPassword: string; newPassword: string; newPasswordConfirm: string }) => Promise<{ ok: boolean; message: string }>;
     signOut: () => void;
     updateRole: (userId: string, role: UserRole) => void;
     updateProfile: (userId: string, changes: Partial<AppUser>) => void;
+    uploadAvatar: (file: File) => Promise<{ ok: boolean; message: string }>;
+    removeAvatar: () => Promise<{ ok: boolean; message: string }>;
     setEmailConfirmed: (userId: string, confirmed: boolean) => void;
     setActive: (userId: string, active: boolean) => void;
     users: AppUser[];
@@ -76,6 +81,36 @@ const saveStoredProfile = (profile: AppUser) => {
     }
 };
 
+const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | null): AppUser => {
+    const avatarFromSession = typeof sessionUser.user_metadata?.avatar_url === 'string'
+        ? sessionUser.user_metadata.avatar_url
+        : null;
+
+    const fromSession: AppUser = {
+        id: sessionUser.id,
+        fullName: String(sessionUser.user_metadata?.full_name ?? sessionUser.email ?? ''),
+        email: sessionUser.email ?? '',
+        role: (sessionUser.app_metadata?.role as UserRole | undefined) ?? 'user',
+        emailConfirmed: Boolean(sessionUser.email_confirmed_at),
+        createdAt: sessionUser.created_at,
+        updatedAt: sessionUser.updated_at ?? sessionUser.created_at,
+        lastSignInAt: sessionUser.last_sign_in_at ?? null,
+        active: true,
+        avatarUrl: avatarFromSession,
+    };
+
+    if (!storedProfile) {
+        return fromSession;
+    }
+
+    return {
+        ...storedProfile,
+        ...fromSession,
+        fullName: storedProfile.fullName || fromSession.fullName,
+        avatarUrl: avatarFromSession || storedProfile.avatarUrl || null,
+    };
+};
+
 export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<AppUser | null>(null);
     const [users, setUsers] = useState<AppUser[]>(() => readUsers());
@@ -83,61 +118,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         if (isSupabaseConfigured && supabase) {
-            void supabase.auth.getSession().then(({ data, error }) => {
-                if (error) {
-                    setLoading(false);
-                    return;
-                }
-
-                const sessionUser = data.session?.user ?? null;
+            const applySessionUser = (sessionUser: User | null) => {
                 if (!sessionUser) {
-                    setLoading(false);
-                    return;
-                }
-
-                const storedProfile = getStoredProfile(sessionUser.id);
-                const nextUser: AppUser = storedProfile ?? {
-                    id: sessionUser.id,
-                    fullName: String(sessionUser.user_metadata?.full_name ?? sessionUser.email ?? ''),
-                    email: sessionUser.email ?? '',
-                    role: (sessionUser.app_metadata?.role as UserRole | undefined) ?? 'user',
-                    emailConfirmed: Boolean(sessionUser.email_confirmed_at),
-                    createdAt: sessionUser.created_at,
-                    updatedAt: sessionUser.updated_at ?? sessionUser.created_at,
-                    lastSignInAt: sessionUser.last_sign_in_at ?? null,
-                    active: true,
-                    avatarUrl: null,
-                };
-
-                setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
-                setUser(nextUser);
-                setLoading(false);
-            });
-
-            const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
-                if (!session?.user) {
                     setUser(null);
                     return;
                 }
 
-                const sessionUser = session.user;
                 const storedProfile = getStoredProfile(sessionUser.id);
-                const nextUser: AppUser = storedProfile ?? {
-                    id: sessionUser.id,
-                    fullName: String(sessionUser.user_metadata?.full_name ?? sessionUser.email ?? ''),
-                    email: sessionUser.email ?? '',
-                    role: (sessionUser.app_metadata?.role as UserRole | undefined) ?? 'user',
-                    emailConfirmed: Boolean(sessionUser.email_confirmed_at),
-                    createdAt: sessionUser.created_at,
-                    updatedAt: sessionUser.updated_at ?? sessionUser.created_at,
-                    lastSignInAt: sessionUser.last_sign_in_at ?? null,
-                    active: true,
-                    avatarUrl: null,
-                };
+                const nextUser = buildAppUserFromSession(sessionUser, storedProfile);
 
                 setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
                 setUser(nextUser);
                 saveStoredProfile(nextUser);
+            };
+
+            const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
+                if (import.meta.env.DEV) {
+                    console.log('[auth] onAuthStateChange', event, session?.user?.email);
+                }
+
+                applySessionUser(session?.user ?? null);
+
+                if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
+                    setLoading(false);
+                }
             });
 
             return () => {
@@ -169,22 +173,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (isSupabaseConfigured && supabase) {
             const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
+            if (import.meta.env.DEV) {
+                console.log('[auth] signInWithPassword session', await supabase.auth.getSession());
+            }
+
             if (error || !data.user) {
                 return { ok: false, message: error?.message ?? 'Giriş yapılamadı.' };
             }
 
-            const nextUser: AppUser = {
-                id: data.user.id,
-                fullName: String(data.user.user_metadata?.full_name ?? data.user.email ?? ''),
-                email: data.user.email ?? email,
-                role: (data.user.app_metadata?.role as UserRole | undefined) ?? 'user',
-                emailConfirmed: Boolean(data.user.email_confirmed_at),
-                createdAt: data.user.created_at,
-                updatedAt: data.user.updated_at ?? data.user.created_at,
-                lastSignInAt: data.user.last_sign_in_at ?? null,
-                active: true,
-                avatarUrl: null,
-            };
+            const storedProfile = getStoredProfile(data.user.id);
+            const nextUser = buildAppUserFromSession(data.user, storedProfile);
 
             setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
             setUser(nextUser);
@@ -200,10 +198,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (!matched.active) {
             return { ok: false, message: 'Hesap pasifleştirilmiş.' };
-        }
-
-        if (!matched.emailConfirmed) {
-            return { ok: false, message: 'Mail doğrulanmadan giriş yapılamaz.' };
         }
 
         if (!password.trim()) {
@@ -227,7 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 email,
                 password,
                 options: {
-                    emailRedirectTo: `${window.location.origin}/login`,
+                    emailRedirectTo: authRedirectUrl(),
                     data: {
                         full_name: fullName,
                         role: 'user',
@@ -245,21 +239,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
 
             if (data.user) {
-                const nextUser: AppUser = {
-                    id: data.user.id,
-                    fullName,
-                    email,
-                    role: 'user',
-                    emailConfirmed: Boolean(data.user.email_confirmed_at),
-                    createdAt: data.user.created_at,
-                    updatedAt: data.user.updated_at ?? data.user.created_at,
-                    lastSignInAt: null,
-                    active: true,
-                    avatarUrl: null,
-                };
+                const nextUser = buildAppUserFromSession(data.user, null);
+                const profileUser: AppUser = { ...nextUser, fullName };
 
-                setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
-                saveStoredProfile(nextUser);
+                setUsers((currentUsers) => mergeUsers(currentUsers, profileUser));
+                saveStoredProfile(profileUser);
             }
 
             return { ok: true, message: 'Doğrulama e-postası gönderildi. Mailini kontrol et.' };
@@ -286,7 +270,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const requestPasswordReset = async (email: string) => {
         if (isSupabaseConfigured && supabase) {
             const { error } = await supabase.auth.resetPasswordForEmail(email, {
-                redirectTo: `${window.location.origin}/login`,
+                redirectTo: authRedirectUrl(),
             });
 
             if (error) {
@@ -298,6 +282,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         const exists = users.some((candidate) => candidate.email.toLowerCase() === email.toLowerCase());
         return { ok: exists, message: exists ? 'Şifre sıfırlama bağlantısı gönderildi.' : 'E-posta bulunamadı.' };
+    };
+
+    const changePassword = async ({ currentPassword, newPassword, newPasswordConfirm }: { currentPassword: string; newPassword: string; newPasswordConfirm: string }) => {
+        if (!currentPassword.trim()) {
+            return { ok: false, message: 'Mevcut şifre gerekli.' };
+        }
+
+        if (newPassword !== newPasswordConfirm) {
+            return { ok: false, message: 'Yeni şifreler eşleşmiyor.' };
+        }
+
+        if (!isStrongPassword(newPassword)) {
+            return { ok: false, message: 'Yeni şifre güçlü değil. En az 10 karakter, büyük/küçük harf, rakam ve özel karakter içermeli.' };
+        }
+
+        if (isSupabaseConfigured && supabase && user) {
+            const { error: verifyError } = await supabase.auth.signInWithPassword({
+                email: user.email,
+                password: currentPassword,
+            });
+
+            if (verifyError) {
+                return { ok: false, message: 'Mevcut şifre hatalı.' };
+            }
+
+            const { error } = await supabase.auth.updateUser({ password: newPassword });
+
+            if (error) {
+                return { ok: false, message: error.message };
+            }
+
+            return { ok: true, message: 'Şifren başarıyla güncellendi.' };
+        }
+
+        return { ok: true, message: 'Şifren başarıyla güncellendi.' };
     };
 
     const signOut = async () => {
@@ -326,6 +345,86 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
     };
 
+    const uploadAvatar = async (file: File) => {
+        const activeUser = user;
+        if (!activeUser) {
+            return { ok: false, message: 'Kullanıcı bulunamadı.' };
+        }
+
+        const validation = validateAvatarFile(file);
+        if (!validation.ok) {
+            return { ok: false, message: validation.message };
+        }
+
+        try {
+            const preparedFile = await prepareAvatarImage(file, validation.mimeType);
+            const previewUrl = await readFileAsDataUrl(preparedFile);
+
+            updateProfile(activeUser.id, { avatarUrl: previewUrl });
+
+            if (isSupabaseConfigured && supabase) {
+                const extension = getAvatarExtension(preparedFile.type || validation.mimeType);
+                const filePath = `${activeUser.id}/avatar.${extension}`;
+                const contentType = preparedFile.type || validation.mimeType;
+                let avatarUrl = previewUrl;
+
+                const { error: uploadError } = await supabase.storage
+                    .from(AVATAR_BUCKET)
+                    .upload(filePath, preparedFile, { upsert: true, contentType });
+
+                if (!uploadError) {
+                    const { data: publicUrl } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(filePath);
+                    avatarUrl = `${publicUrl.publicUrl}?v=${Date.now()}`;
+                }
+
+                const { error: updateError } = await supabase.auth.updateUser({
+                    data: { avatar_url: avatarUrl },
+                });
+
+                if (updateError) {
+                    return { ok: false, message: updateError.message };
+                }
+
+                updateProfile(activeUser.id, { avatarUrl });
+                return {
+                    ok: true,
+                    message: uploadError
+                        ? 'Profil fotoğrafı kaydedildi.'
+                        : 'Profil fotoğrafı güncellendi.',
+                };
+            }
+
+            return { ok: true, message: 'Profil fotoğrafı güncellendi.' };
+        } catch {
+            return { ok: false, message: 'Profil fotoğrafı yüklenemedi.' };
+        }
+    };
+
+    const removeAvatar = async () => {
+        if (!user) {
+            return { ok: false, message: 'Kullanıcı bulunamadı.' };
+        }
+
+        if (isSupabaseConfigured && supabase) {
+            const { data: files } = await supabase.storage.from(AVATAR_BUCKET).list(user.id);
+            if (files?.length) {
+                const paths = files.map((fileItem) => `${user.id}/${fileItem.name}`);
+                await supabase.storage.from(AVATAR_BUCKET).remove(paths);
+            }
+
+            const { error } = await supabase.auth.updateUser({
+                data: { avatar_url: null },
+            });
+
+            if (error) {
+                return { ok: false, message: error.message };
+            }
+        }
+
+        updateProfile(user.id, { avatarUrl: null });
+        return { ok: true, message: 'Profil fotoğrafı kaldırıldı.' };
+    };
+
     const setEmailConfirmed = (userId: string, confirmed: boolean) => updateProfile(userId, { emailConfirmed: confirmed });
     const setActive = (userId: string, active: boolean) => updateProfile(userId, { active });
 
@@ -336,9 +435,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signIn,
         signUp,
         requestPasswordReset,
+        changePassword,
         signOut,
         updateRole,
         updateProfile,
+        uploadAvatar,
+        removeAvatar,
         setEmailConfirmed,
         setActive,
         users,

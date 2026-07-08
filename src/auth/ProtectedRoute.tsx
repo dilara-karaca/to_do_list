@@ -2,7 +2,7 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthProvider';
 
 export function ProtectedRoute() {
-    const { authenticated, loading, user } = useAuth();
+    const { authenticated, loading } = useAuth();
     const location = useLocation();
 
     if (loading) {
@@ -11,10 +11,6 @@ export function ProtectedRoute() {
 
     if (!authenticated) {
         return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-    }
-
-    if (user && !user.emailConfirmed) {
-        return <Navigate to="/login" replace state={{ emailUnverified: true }} />;
     }
 
     return <Outlet />;
