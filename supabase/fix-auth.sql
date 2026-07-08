@@ -65,3 +65,18 @@ end;
 $$;
 
 grant execute on function public.get_admin_users() to authenticated;
+
+create or replace function public.get_own_tasks()
+returns setof public.tasks
+language sql
+security definer
+set search_path = public
+stable
+as $$
+    select *
+    from public.tasks
+    where user_id = auth.uid()
+    order by date desc;
+$$;
+
+grant execute on function public.get_own_tasks() to authenticated;

@@ -1,6 +1,7 @@
 import type { AppUser } from '../types/auth';
-import type { ActivityLog, AdminStats, DbTaskRow, DbUserRow } from '../types/admin';
-import type { Task, TaskMap } from '../types/task';
+import type { ActivityLog, AdminStats, DbUserRow } from '../types/admin';
+import type { TaskMap } from '../types/task';
+import { fetchUserTasksById, syncTaskMapForUser as syncTasksForUser } from './taskService';
 import { isSupabaseConfigured, supabase } from './supabase';
 
 const mapDbUser = (row: DbUserRow): AppUser => ({
@@ -197,34 +198,10 @@ export async function fetchAdminStats(): Promise<AdminStats> {
 }
 
 export async function fetchUserTasks(userId: string): Promise<TaskMap> {
-    if (!isSupabaseConfigured || !supabase) {
-        return {};
-    }
-
-    const { data, error } = await supabase
-        .from('tasks')
-        .select('*')
-        .eq('user_id', userId)
-        .order('date', { ascending: false });
-
-    if (error || !data) {
-        return {};
-    }
-
-    return (data as DbTaskRow[]).reduce<TaskMap>((accumulator, row) => {
-        const list = accumulator[row.date] ?? [];
-        list.push({
-            id: row.id,
-            text: row.title,
-            description: row.description ?? undefined,
-            completed: row.completed,
-            createdAt: row.created_at,
-            userId: row.user_id,
-        });
-        accumulator[row.date] = list;
-        return accumulator;
-    }, {});
+    return fetchUserTasksById(userId);
 }
+
+export { syncTasksForUser as syncTaskMapForUser };
 
 export async function fetchActivityLogs(limit = 20): Promise<ActivityLog[]> {
     if (!isSupabaseConfigured || !supabase) {
@@ -271,39 +248,6 @@ export async function logActivity(
         entity_id: entityId ?? null,
         metadata,
     });
-}
-
-export async function syncTaskMapForUser(userId: string, taskMap: TaskMap, previousTaskIds?: Set<string>) {
-    if (!isSupabaseConfigured || !supabase) {
-        return;
-    }
-
-    const rows = Object.entries(taskMap).flatMap(([date, tasks]) =>
-        tasks.map((task) => ({
-            id: task.id,
-            user_id: userId,
-            title: task.text,
-            description: task.description ?? null,
-            date,
-            completed: task.completed,
-            created_at: task.createdAt,
-        })),
-    );
-
-    const currentTaskIds = new Set(rows.map((row) => row.id));
-
-    if (previousTaskIds?.size) {
-        const removedTaskIds = [...previousTaskIds].filter((taskId) => !currentTaskIds.has(taskId));
-        if (removedTaskIds.length) {
-            await supabase.from('tasks').delete().eq('user_id', userId).in('id', removedTaskIds);
-        }
-    }
-
-    if (!rows.length) {
-        return;
-    }
-
-    await supabase.from('tasks').upsert(rows, { onConflict: 'id' });
 }
 
 export function countTasksInMap(taskMap: TaskMap) {

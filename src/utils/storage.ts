@@ -1,31 +1,46 @@
-import { TaskMap } from '../types/task';
+import type { TaskMap } from '../types/task';
 
-const STORAGE_KEYS = {
-    tasks: 'gorev-planlayici.tasks',
-    selectedDate: 'gorev-planlayici.selected-date',
-} as const;
+const LEGACY_TASKS_KEY = 'gorev-planlayici.tasks';
+const LEGACY_SELECTED_DATE_KEY = 'gorev-planlayici.selected-date';
+const SELECTED_DATE_KEY = 'planner.selected-date';
 
-export const loadTaskMap = (): TaskMap => {
+const taskStorageKey = (userId: string) => `gorev-planlayici.tasks.${userId}`;
+
+export const loadTaskMapForUser = (userId: string): TaskMap => {
     try {
-        const raw = localStorage.getItem(STORAGE_KEYS.tasks);
+        const scopedRaw = localStorage.getItem(taskStorageKey(userId));
+        if (scopedRaw) {
+            return JSON.parse(scopedRaw) as TaskMap;
+        }
+
+        const legacyRaw = localStorage.getItem(LEGACY_TASKS_KEY);
+        return legacyRaw ? (JSON.parse(legacyRaw) as TaskMap) : {};
+    } catch {
+        return {};
+    }
+};
+
+export const saveTaskMapForUser = (userId: string, taskMap: TaskMap) => {
+    localStorage.setItem(taskStorageKey(userId), JSON.stringify(taskMap));
+};
+
+export const loadLegacyTaskMap = (): TaskMap => {
+    try {
+        const raw = localStorage.getItem(LEGACY_TASKS_KEY);
         return raw ? (JSON.parse(raw) as TaskMap) : {};
     } catch {
         return {};
     }
 };
 
-export const saveTaskMap = (taskMap: TaskMap) => {
-    localStorage.setItem(STORAGE_KEYS.tasks, JSON.stringify(taskMap));
-};
-
 export const loadSelectedDate = (): string | null => {
     try {
-        return localStorage.getItem(STORAGE_KEYS.selectedDate);
+        return localStorage.getItem(SELECTED_DATE_KEY) ?? localStorage.getItem(LEGACY_SELECTED_DATE_KEY);
     } catch {
         return null;
     }
 };
 
 export const saveSelectedDate = (dateKey: string) => {
-    localStorage.setItem(STORAGE_KEYS.selectedDate, dateKey);
+    localStorage.setItem(SELECTED_DATE_KEY, dateKey);
 };
