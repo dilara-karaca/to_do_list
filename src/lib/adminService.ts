@@ -80,6 +80,12 @@ export async function ensureUserProfile(user: AppUser): Promise<AppUser | null> 
         return existing;
     }
 
+    const { data: rpcData, error: rpcError } = await supabase.rpc('ensure_own_profile');
+
+    if (!rpcError && rpcData && typeof rpcData === 'object' && 'id' in rpcData) {
+        return mapDbUser(rpcData as DbUserRow);
+    }
+
     const { data, error } = await supabase
         .from('users')
         .insert({

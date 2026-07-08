@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { User } from '@supabase/supabase-js';
 import { authRedirectUrl, AVATAR_BUCKET, isSupabaseConfigured, resetPasswordRedirectUrl, supabase } from '../lib/supabase';
 import type { AppUser, AuthSessionState, UserRole } from '../types/auth';
-import { fetchAdminUsers, fetchUserProfile, updateAdminUser } from '../lib/adminService';
+import { fetchAdminUsers, ensureUserProfile, fetchUserProfile, updateAdminUser } from '../lib/adminService';
 import { getAvatarExtension, prepareAvatarImage, readFileAsDataUrl, validateAvatarFile } from '../utils/avatar';
 import { getResetCooldownRemaining, mapAuthErrorMessage, setResetCooldown } from '../utils/authErrors';
 import { mockUsers } from './mockData';
@@ -149,7 +149,11 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
 
 const hydrateAppUser = async (sessionUser: User): Promise<AppUser> => {
     const baseUser = buildAppUserFromSession(sessionUser, getStoredProfile(sessionUser.id));
-    const dbUser = await fetchUserProfile(sessionUser.id);
+    let dbUser = await fetchUserProfile(sessionUser.id);
+
+    if (!dbUser) {
+        dbUser = await ensureUserProfile(baseUser);
+    }
 
     if (!dbUser) {
         return baseUser;

@@ -11,6 +11,7 @@ import { isSupabaseConfigured } from '../lib/supabase';
 import {
     collectTaskIds,
     deleteSingleTask,
+    ensureTaskStorageReady,
     fetchOwnTasks,
     syncTaskMapForUser,
     upsertSingleTask,
@@ -35,6 +36,7 @@ export function PlannerPage() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [tasksLoading, setTasksLoading] = useState(true);
     const [remoteReady, setRemoteReady] = useState(false);
+    const [syncError, setSyncError] = useState('');
     const previousTaskIdsRef = useRef<Set<string>>(new Set());
     const taskMapRef = useRef<TaskMap>({});
 
@@ -70,6 +72,15 @@ export function PlannerPage() {
             setRemoteReady(false);
 
             if (isSupabaseConfigured) {
+                const ready = await ensureTaskStorageReady();
+                if (cancelled) {
+                    return;
+                }
+
+                if (!ready.ok) {
+                    setSyncError(ready.message ?? 'Görev kaydı hazırlanamadı.');
+                }
+
                 const remoteTasks = await fetchOwnTasks(user.id);
                 if (cancelled) {
                     return;
@@ -132,6 +143,9 @@ export function PlannerPage() {
         const result = await syncTaskMapForUser(user.id, nextTaskMap, previousIds);
         if (result.ok) {
             previousTaskIdsRef.current = collectTaskIds(nextTaskMap);
+            setSyncError('');
+        } else if (result.message) {
+            setSyncError(result.message);
         }
     }, [remoteReady, user?.id]);
 
@@ -188,13 +202,25 @@ export function PlannerPage() {
         }
 
         if (removedTaskId) {
-            await deleteSingleTask(user.id, removedTaskId);
-            previousTaskIdsRef.current.delete(removedTaskId);
+            const result = await deleteSingleTask(user.id, removedTaskId);
+            if (result.ok) {
+                previousTaskIdsRef.current.delete(removedTaskId);
+                setSyncError('');
+            } else if (result.message) {
+                setSyncError(result.message);
+            }
             return;
         }
 
-        await Promise.all(nextTasks.map((task) => upsertSingleTask(user.id, activeDateKey, task)));
-        nextTasks.forEach((task) => previousTaskIdsRef.current.add(task.id));
+        for (const task of nextTasks) {
+            const result = await upsertSingleTask(user.id, activeDateKey, task);
+            if (result.ok) {
+                previousTaskIdsRef.current.add(task.id);
+                setSyncError('');
+            } else if (result.message) {
+                setSyncError(result.message);
+            }
+        }
     };
 
     const handleToggleTask = (taskId: string) => {
@@ -250,6 +276,11 @@ export function PlannerPage() {
             </div>
 
             <Motion.main initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: 'easeOut' }} className="glass-panel relative mx-auto flex w-full max-w-7xl flex-col rounded-[32px] px-4 py-4 sm:px-5 sm:py-5 lg:px-6 lg:py-6">
+                {syncError ? (
+                    <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                        Görevler buluta kaydedilemedi: {syncError}
+                    </div>
+                ) : null}
                 <Header currentDate={selectedDate} monthLabel={format(currentMonth, 'MMMM yyyy', { locale: tr })} />
                 <div className="mt-4 flex flex-col gap-4 lg:mt-5">
                     <Calendar currentMonth={currentMonth} onMonthChange={setCurrentMonth} onDaySelect={selectDate} selectedDate={selectedDate} taskMap={taskMap} onPreviousMonth={() => setCurrentMonth((month) => subMonths(month, 1))} onNextMonth={() => setCurrentMonth((month) => new Date(month.getFullYear(), month.getMonth() + 1, 1))} />
