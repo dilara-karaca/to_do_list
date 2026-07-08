@@ -7,7 +7,7 @@ const mapDbUser = (row: DbUserRow): AppUser => ({
     id: row.id,
     fullName: row.full_name,
     email: row.email,
-    role: row.role,
+    role: row.role?.trim() === 'admin' ? 'admin' : 'user',
     emailConfirmed: row.email_confirmed,
     kvkkConsent: row.kvkk_consent,
     kvkkConsentAt: row.kvkk_consent_at,
@@ -17,6 +17,77 @@ const mapDbUser = (row: DbUserRow): AppUser => ({
     active: row.active,
     avatarUrl: null,
 });
+
+const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+export async function fetchUserProfile(userId: string): Promise<AppUser | null> {
+    if (!isSupabaseConfigured || !supabase) {
+        return null;
+    }
+
+    await supabase.auth.getSession();
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+        if (attempt > 0) {
+            await wait(150 * attempt);
+        }
+
+        const { data, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', userId)
+            .maybeSingle();
+
+        if (error) {
+            if (import.meta.env.DEV) {
+                console.warn('[auth] fetchUserProfile failed', error.message, { userId, attempt });
+            }
+            continue;
+        }
+
+        if (data) {
+            return mapDbUser(data as DbUserRow);
+        }
+    }
+
+    return null;
+}
+
+export async function ensureUserProfile(user: AppUser): Promise<AppUser | null> {
+    if (!isSupabaseConfigured || !supabase) {
+        return null;
+    }
+
+    const existing = await fetchUserProfile(user.id);
+    if (existing) {
+        return existing;
+    }
+
+    const { data, error } = await supabase
+        .from('users')
+        .insert({
+            id: user.id,
+            full_name: user.fullName,
+            email: user.email,
+            role: 'user',
+            active: user.active,
+            email_confirmed: user.emailConfirmed,
+            kvkk_consent: user.kvkkConsent,
+            kvkk_consent_at: user.kvkkConsentAt ?? null,
+            last_sign_in_at: user.lastSignInAt ?? null,
+        })
+        .select('*')
+        .maybeSingle();
+
+    if (error || !data) {
+        if (import.meta.env.DEV) {
+            console.warn('[auth] ensureUserProfile failed', error?.message, { userId: user.id });
+        }
+        return null;
+    }
+
+    return mapDbUser(data as DbUserRow);
+}
 
 export async function fetchAdminUsers(): Promise<AppUser[]> {
     if (!isSupabaseConfigured || !supabase) {
@@ -33,24 +104,6 @@ export async function fetchAdminUsers(): Promise<AppUser[]> {
     }
 
     return (data as DbUserRow[]).map(mapDbUser);
-}
-
-export async function fetchUserProfile(userId: string): Promise<AppUser | null> {
-    if (!isSupabaseConfigured || !supabase) {
-        return null;
-    }
-
-    const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-
-    if (error || !data) {
-        return null;
-    }
-
-    return mapDbUser(data as DbUserRow);
 }
 
 export async function updateAdminUser(userId: string, changes: Partial<Pick<AppUser, 'role' | 'active' | 'emailConfirmed' | 'fullName'>>) {

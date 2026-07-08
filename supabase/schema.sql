@@ -72,6 +72,12 @@ create policy "users can update own profile"
     using (auth.uid() = id)
     with check (auth.uid() = id);
 
+drop policy if exists "users can insert own profile" on public.users;
+create policy "users can insert own profile"
+    on public.users
+    for insert
+    with check (auth.uid() = id);
+
 drop policy if exists "admins can read all users" on public.users;
 create policy "admins can read all users"
     on public.users

@@ -1,8 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { authRedirectUrl, AVATAR_BUCKET, isSupabaseConfigured, resetPasswordRedirectUrl, supabase } from '../lib/supabase';
 import type { AppUser, AuthSessionState, UserRole } from '../types/auth';
-import { fetchAdminUsers, fetchUserProfile, updateAdminUser } from '../lib/adminService';
+import { fetchAdminUsers, ensureUserProfile, fetchUserProfile, updateAdminUser } from '../lib/adminService';
 import { getAvatarExtension, prepareAvatarImage, readFileAsDataUrl, validateAvatarFile } from '../utils/avatar';
 import { getResetCooldownRemaining, mapAuthErrorMessage, setResetCooldown } from '../utils/authErrors';
 import { mockUsers } from './mockData';
@@ -19,6 +19,7 @@ type AuthContextValue = AuthSessionState & {
     removeAvatar: () => Promise<{ ok: boolean; message: string }>;
     setEmailConfirmed: (userId: string, confirmed: boolean) => void;
     setActive: (userId: string, active: boolean) => void;
+    refreshUser: () => Promise<void>;
     users: AppUser[];
 };
 
@@ -83,6 +84,28 @@ const saveStoredProfile = (profile: AppUser) => {
     }
 };
 
+const clearStoredAuthCache = () => {
+    try {
+        localStorage.removeItem(storageKey);
+        localStorage.removeItem(profileStorageKey);
+    } catch {
+        // Ignore local cache cleanup errors.
+    }
+};
+
+const mergeDbProfile = (baseUser: AppUser, dbUser: AppUser): AppUser => ({
+    ...baseUser,
+    ...dbUser,
+    role: dbUser.role,
+    fullName: dbUser.fullName || baseUser.fullName,
+    email: dbUser.email || baseUser.email,
+    emailConfirmed: dbUser.emailConfirmed,
+    kvkkConsent: dbUser.kvkkConsent,
+    kvkkConsentAt: dbUser.kvkkConsentAt ?? baseUser.kvkkConsentAt ?? null,
+    active: dbUser.active,
+    avatarUrl: baseUser.avatarUrl ?? dbUser.avatarUrl ?? null,
+});
+
 const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | null): AppUser => {
     const avatarFromSession = typeof sessionUser.user_metadata?.avatar_url === 'string'
         ? sessionUser.user_metadata.avatar_url
@@ -92,7 +115,7 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
         id: sessionUser.id,
         fullName: String(sessionUser.user_metadata?.full_name ?? sessionUser.email ?? ''),
         email: sessionUser.email ?? '',
-        role: (sessionUser.app_metadata?.role as UserRole | undefined) ?? 'user',
+        role: 'user',
         emailConfirmed: Boolean(sessionUser.email_confirmed_at),
         kvkkConsent: Boolean(sessionUser.user_metadata?.kvkk_consent),
         kvkkConsentAt: typeof sessionUser.user_metadata?.kvkk_consent_at === 'string'
@@ -110,9 +133,9 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
     }
 
     return {
-        ...storedProfile,
         ...fromSession,
         fullName: storedProfile.fullName || fromSession.fullName,
+        email: storedProfile.email || fromSession.email,
         active: storedProfile.active ?? fromSession.active,
         emailConfirmed: fromSession.emailConfirmed || storedProfile.emailConfirmed,
         kvkkConsent: storedProfile.kvkkConsent || fromSession.kvkkConsent,
@@ -122,55 +145,72 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
 };
 
 const hydrateAppUser = async (sessionUser: User): Promise<AppUser> => {
-    const storedProfile = getStoredProfile(sessionUser.id);
-    let nextUser = buildAppUserFromSession(sessionUser, storedProfile);
-    const dbUser = await fetchUserProfile(sessionUser.id);
-
-    if (dbUser) {
-        nextUser = {
-            ...nextUser,
-            ...dbUser,
-            fullName: dbUser.fullName || nextUser.fullName,
-            avatarUrl: nextUser.avatarUrl ?? dbUser.avatarUrl ?? null,
-        };
+    if (isSupabaseConfigured && supabase) {
+        await supabase.auth.getSession();
     }
 
-    return nextUser;
+    const storedProfile = getStoredProfile(sessionUser.id);
+    const baseUser = buildAppUserFromSession(sessionUser, storedProfile);
+    let dbUser = await fetchUserProfile(sessionUser.id);
+
+    if (!dbUser) {
+        dbUser = await ensureUserProfile(baseUser);
+    }
+
+    if (!dbUser) {
+        return baseUser;
+    }
+
+    return mergeDbProfile(baseUser, dbUser);
 };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<AppUser | null>(null);
-    const [users, setUsers] = useState<AppUser[]>(() => readUsers());
+    const [users, setUsers] = useState<AppUser[]>(() => (isSupabaseConfigured ? [] : readUsers()));
     const [loading, setLoading] = useState(true);
+
+    const applySessionUser = async (sessionUser: User | null) => {
+        if (!sessionUser) {
+            setUser(null);
+            return;
+        }
+
+        const nextUser = await hydrateAppUser(sessionUser);
+
+        setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
+        setUser(nextUser);
+        saveStoredProfile(nextUser);
+
+        if (nextUser.role === 'admin') {
+            try {
+                const adminUsers = await fetchAdminUsers();
+                if (adminUsers.length) {
+                    setUsers(adminUsers);
+                }
+            } catch (error) {
+                if (import.meta.env.DEV) {
+                    console.warn('[auth] fetchAdminUsers failed', error);
+                }
+            }
+        }
+    };
 
     useEffect(() => {
         if (isSupabaseConfigured && supabase) {
-            const applySessionUser = async (sessionUser: User | null) => {
-                if (!sessionUser) {
-                    setUser(null);
-                    return;
-                }
-
-                const nextUser = await hydrateAppUser(sessionUser);
-
-                setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
-                setUser(nextUser);
-                saveStoredProfile(nextUser);
-
-                if (nextUser.role === 'admin') {
-                    const adminUsers = await fetchAdminUsers();
-                    if (adminUsers.length) {
-                        setUsers(adminUsers);
-                    }
-                }
-            };
-
             const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
                 if (import.meta.env.DEV) {
                     console.log('[auth] onAuthStateChange', event, session?.user?.email);
                 }
 
-                void applySessionUser(session?.user ?? null);
+                const sessionUser = session?.user ?? null;
+
+                if (!sessionUser) {
+                    setUser(null);
+                } else {
+                    window.setTimeout(() => {
+                        void applySessionUser(sessionUser);
+                    }, 0);
+                }
 
                 if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
                     setLoading(false);
@@ -199,8 +239,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, []);
 
     useEffect(() => {
-        localStorage.setItem(storageKey, JSON.stringify({ userId: user?.id ?? null, users }));
+        if (!isSupabaseConfigured) {
+            localStorage.setItem(storageKey, JSON.stringify({ userId: user?.id ?? null, users }));
+        }
     }, [user, users]);
+
+    const refreshUser = useCallback(async () => {
+        if (!isSupabaseConfigured || !supabase) {
+            return;
+        }
+
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) {
+            return;
+        }
+
+        await applySessionUser(data.user);
+    }, []);
+
+    useEffect(() => {
+        if (!isSupabaseConfigured || !user) {
+            return;
+        }
+
+        const onFocus = () => {
+            void refreshUser();
+        };
+
+        window.addEventListener('focus', onFocus);
+        return () => window.removeEventListener('focus', onFocus);
+    }, [refreshUser, user?.id]);
 
     const signIn = async (email: string, password: string) => {
         if (isSupabaseConfigured && supabase) {
@@ -219,6 +287,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
             setUser(nextUser);
             saveStoredProfile(nextUser);
+
+            if (nextUser.role === 'admin') {
+                try {
+                    const adminUsers = await fetchAdminUsers();
+                    if (adminUsers.length) {
+                        setUsers(adminUsers);
+                    }
+                } catch {
+                    // Admin list is optional during sign-in.
+                }
+            }
+
             return { ok: true, message: 'Giriş başarılı.' };
         }
 
@@ -383,7 +463,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             await supabase.auth.signOut();
         }
 
+        clearStoredAuthCache();
         setUser(null);
+        setUsers(isSupabaseConfigured ? [] : mockUsers);
     };
 
     const persistAdminChange = (userId: string, changes: Partial<AppUser>) => {
@@ -516,8 +598,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         removeAvatar,
         setEmailConfirmed,
         setActive,
+        refreshUser,
         users,
-    }), [loading, user, users]);
+    }), [loading, refreshUser, user, users]);
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
