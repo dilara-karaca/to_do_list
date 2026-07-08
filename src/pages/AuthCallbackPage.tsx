@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../lib/supabase';
+
+export function AuthCallbackPage() {
+    const navigate = useNavigate();
     const [message, setMessage] = useState('Oturum oluşturuluyor...');
     const handledRef = useRef(false);
 
