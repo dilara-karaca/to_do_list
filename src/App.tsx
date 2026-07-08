@@ -4,6 +4,7 @@ import { ProtectedRoute } from './auth/ProtectedRoute';
 import { RoleRoute } from './auth/RoleRoute';
 import { AdminShell } from './layouts/AdminShell';
 import { AppShell } from './layouts/AppShell';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { AuthCallbackPage } from './pages/AuthCallbackPage';
 import { AuthPage } from './pages/AuthPage';
 import { PlannerPage } from './pages/PlannerPage';
@@ -23,6 +24,7 @@ function App() {
                 <Route path="/" element={<Navigate to="/login" replace />} />
                 <Route path="/login" element={<AuthPage />} />
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
+                <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
                 <Route element={<ProtectedRoute />}>
                     <Route element={<AppShell />}>
                         <Route path="/planner" element={<PlannerPage />} />

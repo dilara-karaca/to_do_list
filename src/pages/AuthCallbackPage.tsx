@@ -1,9 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
-
-export function AuthCallbackPage() {
-    const navigate = useNavigate();
     const [message, setMessage] = useState('Oturum oluşturuluyor...');
     const handledRef = useRef(false);
 
@@ -43,8 +39,14 @@ export function AuthCallbackPage() {
         };
 
         const handleCallback = async () => {
+            const hashParams = new URLSearchParams(window.location.hash.slice(1));
             const query = new URLSearchParams(window.location.search);
             const code = query.get('code');
+
+            if (hashParams.get('type') === 'recovery') {
+                navigate(`/auth/reset-password${window.location.search}${window.location.hash}`, { replace: true });
+                return;
+            }
 
             if (code) {
                 const { error } = await client.auth.exchangeCodeForSession(code);

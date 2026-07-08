@@ -23,10 +23,18 @@ export function AuthPage() {
     }, [location.state]);
 
     useEffect(() => {
+        const hashParams = new URLSearchParams(window.location.hash.slice(1));
+        const searchParams = new URLSearchParams(window.location.search);
+
+        if (hashParams.get('type') === 'recovery') {
+            navigate(`/auth/reset-password${window.location.search}${window.location.hash}`, { replace: true });
+            return;
+        }
+
         const hasAuthParams =
             window.location.hash.includes('access_token') ||
-            new URLSearchParams(window.location.search).has('code') ||
-            new URLSearchParams(window.location.search).has('token_hash');
+            searchParams.has('code') ||
+            searchParams.has('token_hash');
 
         if (hasAuthParams) {
             navigate(`/auth/callback${window.location.search}${window.location.hash}`, { replace: true });

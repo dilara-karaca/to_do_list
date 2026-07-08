@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { authRedirectUrl, AVATAR_BUCKET, isSupabaseConfigured, supabase } from '../lib/supabase';
+import { authRedirectUrl, AVATAR_BUCKET, isSupabaseConfigured, resetPasswordRedirectUrl, supabase } from '../lib/supabase';
 import type { AppUser, AuthSessionState, UserRole } from '../types/auth';
 import { getAvatarExtension, prepareAvatarImage, readFileAsDataUrl, validateAvatarFile } from '../utils/avatar';
 import { mockUsers } from './mockData';
@@ -270,7 +270,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const requestPasswordReset = async (email: string) => {
         if (isSupabaseConfigured && supabase) {
             const { error } = await supabase.auth.resetPasswordForEmail(email, {
-                redirectTo: authRedirectUrl(),
+                redirectTo: resetPasswordRedirectUrl(),
             });
 
             if (error) {

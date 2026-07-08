@@ -8,7 +8,7 @@ export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 export const supabase = supabaseUrl && supabaseAnonKey
     ? createClient(supabaseUrl, supabaseAnonKey, {
         auth: {
-            flowType: 'pkce',
+            flowType: 'implicit',
             detectSessionInUrl: true,
             persistSession: true,
             autoRefreshToken: true,
@@ -22,5 +22,7 @@ export const supabaseConfig = {
 };
 
 export const authRedirectUrl = () => `${window.location.origin}/auth/callback`;
+
+export const resetPasswordRedirectUrl = () => `${window.location.origin}/auth/reset-password`;
 
 export const AVATAR_BUCKET = 'avatars';
