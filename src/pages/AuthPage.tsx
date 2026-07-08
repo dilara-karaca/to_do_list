@@ -8,12 +8,12 @@ import { Motion } from '../utils/motion';
 type ViewMode = 'login' | 'register' | 'reset';
 
 export function AuthPage() {
-    const { authenticated, loading, signIn, signUp, requestPasswordReset, signOut } = useAuth();
+    const { authenticated, loading: authLoading, signIn, signUp, requestPasswordReset, signOut } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
     const [mode, setMode] = useState<ViewMode>('login');
     const [message, setMessage] = useState('');
-    const [loading, setLoading] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
 
@@ -53,7 +53,7 @@ export function AuthPage() {
     const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         const formData = new FormData(event.currentTarget);
-        setLoading(true);
+        setSubmitting(true);
 
         if (mode === 'reset') {
             await signOut();
@@ -71,7 +71,7 @@ export function AuthPage() {
                 : await requestPasswordReset(String(formData.get('email') ?? ''));
 
         setMessage(result.message);
-        setLoading(false);
+        setSubmitting(false);
 
         if (result.ok && mode === 'login') {
             navigate(redirectTo, { replace: true });
@@ -86,7 +86,7 @@ export function AuthPage() {
         }
     };
 
-    if (!loading && authenticated && mode === 'login') {
+    if (!authLoading && authenticated && mode === 'login') {
         return <Navigate to={redirectTo} replace />;
     }
 
@@ -155,8 +155,8 @@ export function AuthPage() {
                                 </div>
                             ) : null}
 
-                            <button type="submit" disabled={loading} className="h-12 w-full rounded-2xl bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">
-                                {loading ? 'İşleniyor...' : mode === 'login' ? 'Giriş Yap' : mode === 'register' ? 'Kayıt Ol' : 'Mail Gönder'}
+                            <button type="submit" disabled={submitting} className="h-12 w-full rounded-2xl bg-slate-950 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60">
+                                {submitting ? 'İşleniyor...' : mode === 'login' ? 'Giriş Yap' : mode === 'register' ? 'Kayıt Ol' : 'Mail Gönder'}
                             </button>
                         </form>
 
