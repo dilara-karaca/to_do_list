@@ -1,11 +1,11 @@
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { ArrowLeft, LayoutDashboard, LogOut, Settings, Shield, Users, BarChart3 } from 'lucide-react';
+import { ArrowLeft, Activity, LayoutDashboard, LogOut, Settings, Shield, Users } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 
 const navItems = [
     { to: '/admin', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/admin/users', label: 'Kullanıcılar', icon: Users },
-    { to: '/admin/stats', label: 'İstatistikler', icon: BarChart3 },
+    { to: '/admin/activity', label: 'Aktivite', icon: Activity },
     { to: '/admin/settings', label: 'Ayarlar', icon: Settings },
 ];
 

@@ -38,7 +38,10 @@ export function AdminSettingsPage() {
                         Görev senkronizasyonu: {isSupabaseConfigured ? 'Supabase tasks tablosu' : 'localStorage'}
                     </div>
                     <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
-                        İlk admin ataması: Supabase `public.users.role = 'admin'`
+                        İlk admin: dilarakaraca550@gmail.com
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+                        SQL: fix-tasks.sql + fix-admin.sql
                     </div>
                 </div>
             </section>

@@ -9,6 +9,23 @@ export type AdminStats = {
     last7DaySignups: number;
 };
 
+export type AdminUserSummary = {
+    id: string;
+    fullName: string;
+    email: string;
+    role: 'user' | 'admin';
+    active: boolean;
+    emailConfirmed: boolean;
+    kvkkConsent: boolean;
+    kvkkConsentAt: string | null;
+    lastSignInAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+    taskCount: number;
+    completedTaskCount: number;
+    lastTaskDate: string | null;
+};
+
 export type ActivityLog = {
     id: string;
     actorId: string | null;

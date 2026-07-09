@@ -10,10 +10,12 @@ import { AuthPage } from './pages/AuthPage';
 import { PlannerPage } from './pages/PlannerPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AdminActivityPage } from './pages/admin/AdminActivityPage';
 import { AdminDashboardPage } from './pages/admin/AdminDashboardPage';
 import { AdminPlannerViewPage } from './pages/admin/AdminPlannerViewPage';
 import { AdminSettingsPage } from './pages/admin/AdminSettingsPage';
 import { AdminStatsPage } from './pages/admin/AdminStatsPage';
+import { AdminUserDetailPage } from './pages/admin/AdminUserDetailPage';
 import { AdminUsersPage } from './pages/admin/AdminUsersPage';
 import { UnauthorizedPage } from './pages/UnauthorizedPage';
 
@@ -35,7 +37,9 @@ function App() {
                         <Route element={<AdminShell />}>
                             <Route path="/admin" element={<AdminDashboardPage />} />
                             <Route path="/admin/users" element={<AdminUsersPage />} />
+                            <Route path="/admin/users/:userId" element={<AdminUserDetailPage />} />
                             <Route path="/admin/planner/:userId" element={<AdminPlannerViewPage />} />
+                            <Route path="/admin/activity" element={<AdminActivityPage />} />
                             <Route path="/admin/stats" element={<AdminStatsPage />} />
                             <Route path="/admin/settings" element={<AdminSettingsPage />} />
                         </Route>

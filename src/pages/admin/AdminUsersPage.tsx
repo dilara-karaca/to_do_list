@@ -5,6 +5,14 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider';
 import { useAdminUsersData } from '../../hooks/useAdminData';
 
+const formatDateTime = (value: string | null | undefined) => {
+    if (!value) {
+        return '—';
+    }
+
+    return format(parseISO(value), 'd MMM yyyy HH:mm', { locale: tr });
+};
+
 export function AdminUsersPage() {
     const { user, users: fallbackUsers, updateRole, setActive, setEmailConfirmed } = useAuth();
     const { users, loading, error, refresh } = useAdminUsersData(user?.role === 'admin', fallbackUsers);
@@ -33,22 +41,23 @@ export function AdminUsersPage() {
             {error ? <div className="rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">{error}</div> : null}
 
             <div className="overflow-x-auto rounded-[24px] border border-white/10">
-                <table className="w-full min-w-[980px] text-left text-sm text-slate-200">
+                <table className="w-full min-w-[1100px] text-left text-sm text-slate-200">
                     <thead className="bg-white/5 text-slate-300">
                         <tr>
                             <th className="px-4 py-3">Ad Soyad</th>
                             <th className="px-4 py-3">E-posta</th>
                             <th className="px-4 py-3">Rol</th>
-                            <th className="px-4 py-3">Mail</th>
+                            <th className="px-4 py-3">Görev</th>
                             <th className="px-4 py-3">KVKK</th>
                             <th className="px-4 py-3">Durum</th>
                             <th className="px-4 py-3">Son Giriş</th>
+                            <th className="px-4 py-3">Kayıt</th>
                             <th className="px-4 py-3">Aksiyonlar</th>
                         </tr>
                     </thead>
                     <tbody>
                         {loading ? (
-                            <tr><td colSpan={8} className="px-4 py-8 text-center text-slate-400">Yükleniyor...</td></tr>
+                            <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">Yükleniyor...</td></tr>
                         ) : filteredUsers.map((candidate) => (
                             <tr key={candidate.id} className="border-t border-white/10">
                                 <td className="px-4 py-3 font-medium text-white">{candidate.fullName}</td>
@@ -59,21 +68,21 @@ export function AdminUsersPage() {
                                         <option value="admin">admin</option>
                                     </select>
                                 </td>
-                                <td className="px-4 py-3">{candidate.emailConfirmed ? 'Doğrulandı' : 'Bekliyor'}</td>
+                                <td className="px-4 py-3">
+                                    <div className="text-white">{candidate.taskCount}</div>
+                                    <div className="text-xs text-slate-400">{candidate.completedTaskCount} tamamlandı</div>
+                                </td>
                                 <td className="px-4 py-3">{candidate.kvkkConsent ? 'Onaylı' : 'Yok'}</td>
                                 <td className="px-4 py-3">
                                     <span className={`rounded-full px-3 py-1 text-xs ${candidate.active ? 'bg-emerald-500/15 text-emerald-200' : 'bg-rose-500/15 text-rose-200'}`}>
                                         {candidate.active ? 'Aktif' : 'Pasif'}
                                     </span>
                                 </td>
-                                <td className="px-4 py-3">
-                                    {candidate.lastSignInAt
-                                        ? format(parseISO(candidate.lastSignInAt), 'd MMM yyyy HH:mm', { locale: tr })
-                                        : '—'}
-                                </td>
+                                <td className="px-4 py-3">{formatDateTime(candidate.lastSignInAt)}</td>
+                                <td className="px-4 py-3">{formatDateTime(candidate.createdAt)}</td>
                                 <td className="px-4 py-3">
                                     <div className="flex flex-wrap gap-2">
-                                        <Link to={`/admin/planner/${candidate.id}`} className="rounded-full bg-white/10 px-3 py-2 hover:bg-white/15">Planner</Link>
+                                        <Link to={`/admin/users/${candidate.id}`} className="rounded-full bg-rose-500/20 px-3 py-2 text-rose-100 hover:bg-rose-500/30">Detay</Link>
                                         <button type="button" className="rounded-full bg-white/10 px-3 py-2 hover:bg-white/15" onClick={() => setEmailConfirmed(candidate.id, !candidate.emailConfirmed)}>Mail</button>
                                         <button type="button" className="rounded-full bg-white/10 px-3 py-2 hover:bg-white/15" onClick={() => setActive(candidate.id, !candidate.active)}>
                                             {candidate.active ? 'Pasifleştir' : 'Aktifleştir'}

@@ -1,7 +1,6 @@
 import type { AppUser } from '../types/auth';
-import type { ActivityLog, AdminStats, DbUserRow } from '../types/admin';
-import type { TaskMap } from '../types/task';
-import { fetchUserTasksById } from './taskService';
+import type { ActivityLog, AdminStats, AdminUserSummary, DbTaskRow, DbUserRow } from '../types/admin';
+import type { Task, TaskMap } from '../types/task';
 import { isSupabaseConfigured, supabase } from './supabase';
 
 const mapDbUser = (row: DbUserRow): AppUser => ({
@@ -18,6 +17,36 @@ const mapDbUser = (row: DbUserRow): AppUser => ({
     active: row.active,
     avatarUrl: null,
 });
+
+type AdminUserStatsRow = DbUserRow & {
+    task_count?: number;
+    completed_task_count?: number;
+    last_task_date?: string | null;
+};
+
+const mapDbUserSummary = (row: AdminUserStatsRow): AdminUserSummary => ({
+    ...mapDbUser(row),
+    kvkkConsentAt: row.kvkk_consent_at ?? null,
+    lastSignInAt: row.last_sign_in_at ?? null,
+    taskCount: Number(row.task_count ?? 0),
+    completedTaskCount: Number(row.completed_task_count ?? 0),
+    lastTaskDate: row.last_task_date ?? null,
+});
+
+const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap =>
+    rows.reduce<TaskMap>((accumulator, row) => {
+        const list = accumulator[row.date] ?? [];
+        list.push({
+            id: row.id,
+            text: row.title,
+            description: row.description ?? undefined,
+            completed: row.completed,
+            createdAt: row.created_at,
+            userId: row.user_id,
+        });
+        accumulator[row.date] = list;
+        return accumulator;
+    }, {});
 
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -113,14 +142,50 @@ export async function ensureUserProfile(user: AppUser): Promise<AppUser | null> 
 }
 
 export async function fetchAdminUsers(): Promise<AppUser[]> {
+    const summaries = await fetchAdminUsersWithStats();
+    return summaries;
+}
+
+export async function fetchAdminUsersWithStats(): Promise<AdminUserSummary[]> {
     if (!isSupabaseConfigured || !supabase) {
         return [];
     }
 
-    const { data: rpcData, error: rpcError } = await supabase.rpc('get_admin_users');
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_admin_users_with_stats');
 
     if (!rpcError && rpcData) {
-        return (rpcData as DbUserRow[]).map(mapDbUser);
+        return (rpcData as AdminUserStatsRow[]).map(mapDbUserSummary);
+    }
+
+    const { data: usersData, error: usersError } = await supabase.rpc('get_admin_users');
+
+    if (!usersError && usersData) {
+        const users = usersData as DbUserRow[];
+        const { data: tasksData } = await supabase.from('tasks').select('user_id, completed, date');
+
+        const statsByUser = new Map<string, { taskCount: number; completedTaskCount: number; lastTaskDate: string | null }>();
+
+        for (const task of tasksData ?? []) {
+            const current = statsByUser.get(task.user_id) ?? { taskCount: 0, completedTaskCount: 0, lastTaskDate: null };
+            current.taskCount += 1;
+            if (task.completed) {
+                current.completedTaskCount += 1;
+            }
+            if (!current.lastTaskDate || task.date > current.lastTaskDate) {
+                current.lastTaskDate = task.date;
+            }
+            statsByUser.set(task.user_id, current);
+        }
+
+        return users.map((row) => {
+            const stats = statsByUser.get(row.id) ?? { taskCount: 0, completedTaskCount: 0, lastTaskDate: null };
+            return mapDbUserSummary({
+                ...row,
+                task_count: stats.taskCount,
+                completed_task_count: stats.completedTaskCount,
+                last_task_date: stats.lastTaskDate,
+            });
+        });
     }
 
     const { data, error } = await supabase
@@ -132,7 +197,12 @@ export async function fetchAdminUsers(): Promise<AppUser[]> {
         throw new Error(error?.message ?? 'Kullanıcılar yüklenemedi.');
     }
 
-    return (data as DbUserRow[]).map(mapDbUser);
+    return (data as DbUserRow[]).map((row) => mapDbUserSummary({ ...row, task_count: 0, completed_task_count: 0, last_task_date: null }));
+}
+
+export async function fetchAdminUserById(userId: string): Promise<AdminUserSummary | null> {
+    const users = await fetchAdminUsersWithStats();
+    return users.find((candidate) => candidate.id === userId) ?? null;
 }
 
 export async function updateAdminUser(userId: string, changes: Partial<Pick<AppUser, 'role' | 'active' | 'emailConfirmed' | 'fullName'>>) {
@@ -204,7 +274,33 @@ export async function fetchAdminStats(): Promise<AdminStats> {
 }
 
 export async function fetchUserTasks(userId: string): Promise<TaskMap> {
-    return fetchUserTasksById(userId);
+    if (!isSupabaseConfigured || !supabase) {
+        return {};
+    }
+
+    try {
+        const { data: rpcData, error: rpcError } = await supabase.rpc('get_admin_user_tasks', {
+            p_user_id: userId,
+        });
+
+        if (!rpcError && Array.isArray(rpcData)) {
+            return mapRowsToTaskMap(rpcData as DbTaskRow[]);
+        }
+
+        const { data, error } = await supabase
+            .from('tasks')
+            .select('*')
+            .eq('user_id', userId)
+            .order('date', { ascending: false });
+
+        if (error || !data) {
+            return {};
+        }
+
+        return mapRowsToTaskMap(data as DbTaskRow[]);
+    } catch {
+        return {};
+    }
 }
 
 export async function fetchActivityLogs(limit = 20): Promise<ActivityLog[]> {
@@ -263,4 +359,14 @@ export function countCompletedTasksInMap(taskMap: TaskMap) {
         (total, tasks) => total + tasks.filter((task) => task.completed).length,
         0,
     );
+}
+
+export function getRecentSignIns(users: AdminUserSummary[], limit = 8) {
+    return [...users]
+        .sort((left, right) => {
+            const leftTime = left.lastSignInAt ? new Date(left.lastSignInAt).getTime() : 0;
+            const rightTime = right.lastSignInAt ? new Date(right.lastSignInAt).getTime() : 0;
+            return rightTime - leftTime;
+        })
+        .slice(0, limit);
 }
