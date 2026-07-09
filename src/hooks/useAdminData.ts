@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+    computeAdminStats,
     fetchActivityLogs,
-    fetchAdminStats,
-    fetchAdminUserById,
     fetchAdminUsersWithStats,
     fetchUserTasks,
 } from '../lib/adminService';
+import { formatAdminError } from '../components/admin/adminUi';
 import type { AppUser } from '../types/auth';
 import type { ActivityLog, AdminStats, AdminUserSummary } from '../types/admin';
 import type { TaskMap } from '../types/task';
@@ -47,16 +47,28 @@ export function useAdminDashboardData(enabled: boolean) {
         setError('');
 
         try {
-            const [nextStats, nextUsers, nextLogs] = await Promise.all([
-                fetchAdminStats(),
+            const [usersResult, logsResult] = await Promise.allSettled([
                 fetchAdminUsersWithStats(),
                 fetchActivityLogs(12),
             ]);
-            setStats(nextStats);
+
+            const nextUsers = usersResult.status === 'fulfilled' ? usersResult.value : [];
+            const nextLogs = logsResult.status === 'fulfilled' ? logsResult.value : [];
+
             setUsers(nextUsers);
+            setStats(computeAdminStats(nextUsers));
             setLogs(nextLogs);
+
+            const failures = [usersResult, logsResult].filter((result) => result.status === 'rejected') as PromiseRejectedResult[];
+            if (failures.length) {
+                setError(formatAdminError(failures[0].reason));
+            } else if (!nextUsers.length) {
+                setError('Kullanıcı listesi boş. Supabase SQL Editor\'da fix-admin.sql dosyasını çalıştır.');
+            } else {
+                setError('');
+            }
         } catch (caughtError) {
-            setError(caughtError instanceof Error ? caughtError.message : 'Admin verileri yüklenemedi.');
+            setError(formatAdminError(caughtError));
         } finally {
             setLoading(false);
         }
@@ -86,8 +98,11 @@ export function useAdminUsersData(enabled: boolean, fallbackUsers: AppUser[]) {
         try {
             const nextUsers = await fetchAdminUsersWithStats();
             setUsers(nextUsers.length ? nextUsers : mapFallbackSummaries(fallbackUsers));
+            if (!nextUsers.length) {
+                setError('Kullanıcılar yüklenemedi. fix-admin.sql dosyasını Supabase\'de çalıştır.');
+            }
         } catch (caughtError) {
-            setError(caughtError instanceof Error ? caughtError.message : 'Kullanıcılar yüklenemedi.');
+            setError(formatAdminError(caughtError));
             setUsers(mapFallbackSummaries(fallbackUsers));
         } finally {
             setLoading(false);
@@ -120,21 +135,21 @@ export function useAdminUserDetail(userId: string | undefined, enabled: boolean,
         setError('');
 
         try {
-            const [nextUser, nextTasks] = await Promise.all([
-                fetchAdminUserById(userId),
+            const [usersResult, tasksResult] = await Promise.allSettled([
+                fetchAdminUsersWithStats(),
                 fetchUserTasks(userId),
             ]);
 
-            if (!nextUser) {
-                const fallback = mapFallbackSummaries(fallbackUsers).find((candidate) => candidate.id === userId) ?? null;
-                setUser(fallback);
-            } else {
-                setUser(nextUser);
-            }
+            const allUsers = usersResult.status === 'fulfilled' ? usersResult.value : [];
+            const nextTasks = tasksResult.status === 'fulfilled' ? tasksResult.value : {};
+            const nextUser = allUsers.find((candidate) => candidate.id === userId)
+                ?? mapFallbackSummaries(fallbackUsers).find((candidate) => candidate.id === userId)
+                ?? null;
 
+            setUser(nextUser);
             setTaskMap(nextTasks);
         } catch (caughtError) {
-            setError(caughtError instanceof Error ? caughtError.message : 'Kullanıcı detayı yüklenemedi.');
+            setError(formatAdminError(caughtError));
         } finally {
             setLoading(false);
         }
@@ -164,7 +179,7 @@ export function useAdminActivityData(enabled: boolean) {
             const nextLogs = await fetchActivityLogs(50);
             setLogs(nextLogs);
         } catch (caughtError) {
-            setError(caughtError instanceof Error ? caughtError.message : 'Aktivite kayıtları yüklenemedi.');
+            setError(formatAdminError(caughtError));
         } finally {
             setLoading(false);
         }

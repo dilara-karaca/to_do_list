@@ -71,7 +71,7 @@ export function AppShell() {
                     <NavLink className={({ isActive }) => `rounded-full px-4 py-2 text-sm transition ${isActive ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-white/70'}`} to="/profile">Profil</NavLink>
                     <NavLink className={({ isActive }) => `rounded-full px-4 py-2 text-sm transition ${isActive ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-white/70'}`} to="/settings">Ayarlar</NavLink>
                     {user?.role === 'admin' ? (
-                        <NavLink className={({ isActive }) => `rounded-full px-4 py-2 text-sm transition ${isActive ? 'bg-rose-600 text-white' : 'text-rose-700 hover:bg-rose-50'}`} to="/admin">Admin</NavLink>
+                        <NavLink className={({ isActive }) => `rounded-full px-4 py-2 text-sm transition ${isActive ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-white/70'}`} to="/admin">Admin</NavLink>
                     ) : null}
                 </nav>
 

@@ -36,9 +36,33 @@ const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap =>
         return accumulator;
     }, {});
 
+async function loadUsersFromAdminRpc(): Promise<AdminUserSummary[] | null> {
+    if (!supabase) {
+        return null;
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('get_admin_users_with_stats');
+
+    if (!rpcError && Array.isArray(rpcData) && rpcData.length) {
+        return (rpcData as AdminUserStatsRow[]).map(mapDbUserSummary);
+    }
+
+    const { data: usersData, error: usersError } = await supabase.rpc('get_admin_users');
+
+    if (usersError || !Array.isArray(usersData) || !usersData.length) {
+        return null;
+    }
+
+    return (usersData as DbUserRow[]).map((row) => mapDbUserSummary({
+        ...row,
+        task_count: 0,
+        completed_task_count: 0,
+        last_task_date: null,
+    }));
+}
+
 export async function fetchAdminUsers() {
-    const summaries = await fetchAdminUsersWithStats();
-    return summaries;
+    return fetchAdminUsersWithStats();
 }
 
 export async function fetchAdminUsersWithStats(): Promise<AdminUserSummary[]> {
@@ -46,53 +70,48 @@ export async function fetchAdminUsersWithStats(): Promise<AdminUserSummary[]> {
         return [];
     }
 
-    const { data: rpcData, error: rpcError } = await supabase.rpc('get_admin_users_with_stats');
-
-    if (!rpcError && rpcData) {
-        return (rpcData as AdminUserStatsRow[]).map(mapDbUserSummary);
-    }
-
-    const { data: usersData, error: usersError } = await supabase.rpc('get_admin_users');
-
-    if (!usersError && usersData) {
-        const users = usersData as DbUserRow[];
-        const { data: tasksData } = await supabase.from('tasks').select('user_id, completed, date');
-
-        const statsByUser = new Map<string, { taskCount: number; completedTaskCount: number; lastTaskDate: string | null }>();
-
-        for (const task of tasksData ?? []) {
-            const current = statsByUser.get(task.user_id) ?? { taskCount: 0, completedTaskCount: 0, lastTaskDate: null };
-            current.taskCount += 1;
-            if (task.completed) {
-                current.completedTaskCount += 1;
-            }
-            if (!current.lastTaskDate || task.date > current.lastTaskDate) {
-                current.lastTaskDate = task.date;
-            }
-            statsByUser.set(task.user_id, current);
+    try {
+        const fromRpc = await loadUsersFromAdminRpc();
+        if (fromRpc?.length) {
+            return fromRpc;
         }
 
-        return users.map((row) => {
-            const stats = statsByUser.get(row.id) ?? { taskCount: 0, completedTaskCount: 0, lastTaskDate: null };
-            return mapDbUserSummary({
-                ...row,
-                task_count: stats.taskCount,
-                completed_task_count: stats.completedTaskCount,
-                last_task_date: stats.lastTaskDate,
-            });
-        });
+        const { data, error } = await supabase
+            .from('users')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (error || !data) {
+            return [];
+        }
+
+        return (data as DbUserRow[]).map((row) => mapDbUserSummary({
+            ...row,
+            task_count: 0,
+            completed_task_count: 0,
+            last_task_date: null,
+        }));
+    } catch {
+        return [];
     }
+}
 
-    const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .order('created_at', { ascending: false });
+export function computeAdminStats(users: AdminUserSummary[]): AdminStats {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekStart = new Date(todayStart);
+    weekStart.setDate(weekStart.getDate() - 6);
 
-    if (error || !data) {
-        throw new Error(error?.message ?? 'Kullanıcılar yüklenemedi.');
-    }
-
-    return (data as DbUserRow[]).map((row) => mapDbUserSummary({ ...row, task_count: 0, completed_task_count: 0, last_task_date: null }));
+    return {
+        totalUsers: users.length,
+        activeUsers: users.filter((user) => user.active).length,
+        confirmedUsers: users.filter((user) => user.emailConfirmed).length,
+        unconfirmedUsers: users.filter((user) => !user.emailConfirmed).length,
+        kvkkApprovedUsers: users.filter((user) => user.kvkkConsent).length,
+        totalTasks: users.reduce((total, user) => total + user.taskCount, 0),
+        todaySignups: users.filter((user) => new Date(user.createdAt) >= todayStart).length,
+        last7DaySignups: users.filter((user) => new Date(user.createdAt) >= weekStart).length,
+    };
 }
 
 export async function fetchAdminUserById(userId: string): Promise<AdminUserSummary | null> {
@@ -125,47 +144,8 @@ export async function updateAdminUser(userId: string, changes: Partial<Pick<AppU
 }
 
 export async function fetchAdminStats(): Promise<AdminStats> {
-    if (!isSupabaseConfigured || !supabase) {
-        return {
-            totalUsers: 0,
-            activeUsers: 0,
-            confirmedUsers: 0,
-            unconfirmedUsers: 0,
-            kvkkApprovedUsers: 0,
-            totalTasks: 0,
-            todaySignups: 0,
-            last7DaySignups: 0,
-        };
-    }
-
-    const [usersResult, tasksResult] = await Promise.all([
-        supabase.from('users').select('id, active, email_confirmed, kvkk_consent, created_at'),
-        supabase.from('tasks').select('id', { count: 'exact', head: true }),
-    ]);
-
-    const users = (usersResult.data ?? []) as Array<{
-        id: string;
-        active: boolean;
-        email_confirmed: boolean;
-        kvkk_consent: boolean;
-        created_at: string;
-    }>;
-
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const weekStart = new Date(todayStart);
-    weekStart.setDate(weekStart.getDate() - 6);
-
-    return {
-        totalUsers: users.length,
-        activeUsers: users.filter((user) => user.active).length,
-        confirmedUsers: users.filter((user) => user.email_confirmed).length,
-        unconfirmedUsers: users.filter((user) => !user.email_confirmed).length,
-        kvkkApprovedUsers: users.filter((user) => user.kvkk_consent).length,
-        totalTasks: tasksResult.count ?? 0,
-        todaySignups: users.filter((user) => new Date(user.created_at) >= todayStart).length,
-        last7DaySignups: users.filter((user) => new Date(user.created_at) >= weekStart).length,
-    };
+    const users = await fetchAdminUsersWithStats();
+    return computeAdminStats(users);
 }
 
 export async function fetchUserTasks(userId: string): Promise<TaskMap> {
@@ -203,25 +183,29 @@ export async function fetchActivityLogs(limit = 20): Promise<ActivityLog[]> {
         return [];
     }
 
-    const { data, error } = await supabase
-        .from('activity_logs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(limit);
+    try {
+        const { data, error } = await supabase
+            .from('activity_logs')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(limit);
 
-    if (error || !data) {
+        if (error || !data) {
+            return [];
+        }
+
+        return data.map((row) => ({
+            id: row.id,
+            actorId: row.actor_id,
+            action: row.action,
+            entityType: row.entity_type,
+            entityId: row.entity_id,
+            metadata: (row.metadata ?? {}) as Record<string, unknown>,
+            createdAt: row.created_at,
+        }));
+    } catch {
         return [];
     }
-
-    return data.map((row) => ({
-        id: row.id,
-        actorId: row.actor_id,
-        action: row.action,
-        entityType: row.entity_type,
-        entityId: row.entity_id,
-        metadata: (row.metadata ?? {}) as Record<string, unknown>,
-        createdAt: row.created_at,
-    }));
 }
 
 export async function logActivity(

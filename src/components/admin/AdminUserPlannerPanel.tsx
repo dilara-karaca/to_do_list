@@ -1,6 +1,7 @@
 import { format, parseISO } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import { useMemo } from 'react';
+import { adminUi } from './adminUi';
 import { countCompletedTasksInMap, countTasksInMap } from '../../lib/adminService';
 import type { TaskMap } from '../../types/task';
 
@@ -22,41 +23,37 @@ export function AdminUserPlannerPanel({ taskMap, loading = false, readOnlyLabel 
     return (
         <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-3">
-                <div className="rounded-[24px] border border-white/10 bg-white/8 p-5">
-                    <div className="text-sm text-slate-400">Toplam Görev</div>
-                    <div className="mt-2 text-3xl font-semibold text-white">{totalTasks}</div>
+                <div className={adminUi.card}>
+                    <div className={adminUi.label}>Toplam Görev</div>
+                    <div className={`mt-2 ${adminUi.value}`}>{totalTasks}</div>
                 </div>
-                <div className="rounded-[24px] border border-white/10 bg-white/8 p-5">
-                    <div className="text-sm text-slate-400">Tamamlanan</div>
-                    <div className="mt-2 text-3xl font-semibold text-white">{completedTasks}</div>
+                <div className={adminUi.card}>
+                    <div className={adminUi.label}>Tamamlanan</div>
+                    <div className={`mt-2 ${adminUi.value}`}>{completedTasks}</div>
                 </div>
-                <div className="rounded-[24px] border border-white/10 bg-white/8 p-5">
-                    <div className="text-sm text-slate-400">Aktif Gün</div>
-                    <div className="mt-2 text-3xl font-semibold text-white">{dates.length}</div>
+                <div className={adminUi.card}>
+                    <div className={adminUi.label}>Aktif Gün</div>
+                    <div className={`mt-2 ${adminUi.value}`}>{dates.length}</div>
                 </div>
             </div>
 
-            {readOnlyLabel ? (
-                <div className="rounded-[24px] border border-rose-300/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-                    {readOnlyLabel}
-                </div>
-            ) : null}
+            {readOnlyLabel ? <div className={adminUi.warning}>{readOnlyLabel}</div> : null}
 
             {loading ? (
-                <div className="text-slate-400">Planner verileri yükleniyor...</div>
+                <div className="text-slate-500">Planner verileri yükleniyor...</div>
             ) : dates.length ? dates.map((date) => (
-                <div key={date} className="rounded-[24px] border border-white/10 bg-white/8 p-5">
-                    <div className="mb-4 text-lg font-semibold text-white">
+                <div key={date} className={adminUi.card}>
+                    <div className="mb-4 text-lg font-semibold text-slate-900">
                         {format(parseISO(date), 'd MMMM yyyy, EEEE', { locale: tr })}
                     </div>
                     <div className="space-y-2">
                         {(taskMap[date] ?? []).map((task) => (
-                            <div key={task.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                            <div key={task.id} className={`${adminUi.cardSoft} flex items-center justify-between gap-3`}>
                                 <div className="min-w-0">
-                                    <div className="font-medium text-white">{task.text}</div>
-                                    {task.description ? <div className="mt-1 text-sm text-slate-400">{task.description}</div> : null}
+                                    <div className="font-medium text-slate-900">{task.text}</div>
+                                    {task.description ? <div className="mt-1 text-sm text-slate-500">{task.description}</div> : null}
                                 </div>
-                                <span className={`shrink-0 rounded-full px-3 py-1 text-xs ${task.completed ? 'bg-emerald-500/15 text-emerald-200' : 'bg-amber-500/15 text-amber-100'}`}>
+                                <span className={`shrink-0 rounded-full px-3 py-1 text-xs ${task.completed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>
                                     {task.completed ? 'Tamamlandı' : 'Bekliyor'}
                                 </span>
                             </div>
@@ -64,7 +61,7 @@ export function AdminUserPlannerPanel({ taskMap, loading = false, readOnlyLabel 
                     </div>
                 </div>
             )) : (
-                <div className="rounded-[24px] border border-white/10 bg-white/8 p-8 text-center text-slate-400">
+                <div className={`${adminUi.card} text-center text-slate-500`}>
                     Bu kullanıcıya ait görev bulunamadı.
                 </div>
             )}

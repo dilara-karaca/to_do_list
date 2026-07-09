@@ -1,4 +1,5 @@
 import { useAuth } from '../../auth/AuthProvider';
+import { adminUi } from '../../components/admin/adminUi';
 import { useAdminDashboardData } from '../../hooks/useAdminData';
 
 export function AdminStatsPage() {
@@ -17,17 +18,17 @@ export function AdminStatsPage() {
     ];
 
     return (
-        <div className="space-y-6">
+        <div className={adminUi.page}>
             <div>
-                <div className="text-xs uppercase tracking-[0.3em] text-rose-300">İstatistikler</div>
-                <h1 className="mt-2 text-3xl font-semibold text-white">Sistem Özeti</h1>
+                <div className={adminUi.subtitle}>İstatistikler</div>
+                <h1 className={`mt-2 ${adminUi.title}`}>Sistem Özeti</h1>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
                 {rows.map((row) => (
-                    <div key={row.label} className="rounded-[24px] border border-white/10 bg-white/8 p-5">
-                        <div className="text-sm text-slate-400">{row.label}</div>
-                        <div className="mt-3 text-3xl font-semibold text-white">{loading ? '...' : row.value}</div>
+                    <div key={row.label} className={adminUi.card}>
+                        <div className={adminUi.label}>{row.label}</div>
+                        <div className={`mt-3 ${adminUi.value}`}>{loading ? '...' : row.value}</div>
                     </div>
                 ))}
             </div>
