@@ -88,13 +88,39 @@ const clearStoredAuthCache = () => {
         localStorage.removeItem(storageKey);
         localStorage.removeItem(profileStorageKey);
 
-        for (const key of Object.keys(localStorage)) {
-            if (key.startsWith('sb-') && key.includes('-auth-token')) {
-                localStorage.removeItem(key);
+        for (const storage of [localStorage, sessionStorage]) {
+            for (const key of Object.keys(storage)) {
+                if (key.startsWith('sb-') && key.includes('auth')) {
+                    storage.removeItem(key);
+                }
             }
         }
     } catch {
         // Ignore local cache cleanup errors.
+    }
+};
+
+const markSignedOut = () => {
+    try {
+        sessionStorage.setItem('planner.just-signed-out', '1');
+    } catch {
+        // Ignore session flag errors.
+    }
+};
+
+export const hasJustSignedOut = () => {
+    try {
+        return sessionStorage.getItem('planner.just-signed-out') === '1';
+    } catch {
+        return false;
+    }
+};
+
+export const clearJustSignedOut = () => {
+    try {
+        sessionStorage.removeItem('planner.just-signed-out');
+    } catch {
+        // Ignore session flag errors.
     }
 };
 
@@ -167,9 +193,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [users, setUsers] = useState<AppUser[]>(() => (isSupabaseConfigured ? [] : readUsers()));
     const [loading, setLoading] = useState(true);
     const hydrateInFlightRef = useRef<string | null>(null);
+    const signedOutRef = useRef(false);
 
     const applySessionUser = useCallback(async (sessionUser: User | null) => {
-        if (!sessionUser) {
+        if (!sessionUser || signedOutRef.current) {
             setUser(null);
             return;
         }
@@ -218,6 +245,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             let active = true;
 
             const bootstrap = async () => {
+                if (hasJustSignedOut()) {
+                    setUser(null);
+                    setLoading(false);
+                    return;
+                }
+
                 const { data, error } = await client.auth.getSession();
 
                 if (!active) {
@@ -254,9 +287,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     return;
                 }
 
-                const sessionUser = session?.user ?? null;
+                if (event === 'SIGNED_OUT' || !session?.user) {
+                    setUser(null);
+                    setLoading(false);
+                    return;
+                }
 
-                if (!sessionUser) {
+                if (signedOutRef.current || hasJustSignedOut()) {
+                    void client.auth.signOut({ scope: 'local' });
                     setUser(null);
                     setLoading(false);
                     return;
@@ -264,7 +302,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
                 if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
                     window.setTimeout(() => {
-                        void applySessionUser(sessionUser);
+                        void applySessionUser(session.user);
                     }, 0);
                 }
             });
@@ -299,6 +337,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const signIn = async (email: string, password: string) => {
         if (isSupabaseConfigured && supabase) {
+            signedOutRef.current = false;
+            clearJustSignedOut();
+
             const { error } = await supabase.auth.signInWithPassword({ email, password });
 
             if (error) {
@@ -465,14 +506,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const signOut = async () => {
-        if (isSupabaseConfigured && supabase) {
-            await supabase.auth.signOut({ scope: 'global' });
-        }
-
-        clearStoredAuthCache();
+        signedOutRef.current = true;
+        markSignedOut();
         setUser(null);
         setUsers(isSupabaseConfigured ? [] : mockUsers);
         setLoading(false);
+        clearStoredAuthCache();
+
+        if (isSupabaseConfigured && supabase) {
+            await supabase.auth.signOut({ scope: 'local' });
+            try {
+                await supabase.auth.signOut({ scope: 'global' });
+            } catch {
+                // Global sign-out can fail offline; local session is already cleared.
+            }
+        }
     };
 
     const persistAdminChange = (userId: string, changes: Partial<AppUser>) => {

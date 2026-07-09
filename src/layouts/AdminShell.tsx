@@ -1,4 +1,4 @@
-import { Link, NavLink, Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { ArrowLeft, LayoutDashboard, LogOut, Settings, Shield, Users, BarChart3 } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 
@@ -11,6 +11,7 @@ const navItems = [
 
 export function AdminShell() {
     const { user, signOut } = useAuth();
+    const navigate = useNavigate();
 
     return (
         <div className="min-h-screen bg-slate-950 px-4 py-4 text-slate-100 lg:px-6 lg:py-6">
@@ -48,7 +49,7 @@ export function AdminShell() {
                             <ArrowLeft className="h-4 w-4" />
                             Uygulamaya Dön
                         </Link>
-                        <button type="button" onClick={() => void signOut()} className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm text-rose-200 hover:bg-rose-500/10">
+                        <button type="button" onClick={() => void signOut().then(() => navigate('/login', { replace: true }))} className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm text-rose-200 hover:bg-rose-500/10">
                             <LogOut className="h-4 w-4" />
                             Çıkış Yap
                         </button>

@@ -1,7 +1,7 @@
 import type { AppUser } from '../types/auth';
 import type { ActivityLog, AdminStats, DbUserRow } from '../types/admin';
 import type { TaskMap } from '../types/task';
-import { fetchUserTasksById, syncTaskMapForUser as syncTasksForUser } from './taskService';
+import { fetchUserTasksById } from './taskService';
 import { isSupabaseConfigured, supabase } from './supabase';
 
 const mapDbUser = (row: DbUserRow): AppUser => ({
@@ -206,8 +206,6 @@ export async function fetchAdminStats(): Promise<AdminStats> {
 export async function fetchUserTasks(userId: string): Promise<TaskMap> {
     return fetchUserTasksById(userId);
 }
-
-export { syncTasksForUser as syncTaskMapForUser };
 
 export async function fetchActivityLogs(limit = 20): Promise<ActivityLog[]> {
     if (!isSupabaseConfigured || !supabase) {

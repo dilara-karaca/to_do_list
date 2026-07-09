@@ -1,4 +1,4 @@
--- Görev kalıcılığı düzeltmeleri
+-- Görev kalıcılığı düzeltmeleri (JWT tabanlı, auth.users okumaz)
 -- Supabase SQL Editor'da bir kez çalıştır.
 
 create or replace function public.ensure_own_profile()
@@ -8,16 +8,25 @@ security definer
 set search_path = public
 as $$
 declare
-    auth_user record;
     profile public.users;
+    user_id uuid := auth.uid();
+    user_email text := coalesce(auth.jwt()->>'email', '');
+    user_name text := coalesce(
+        auth.jwt()->'user_metadata'->>'full_name',
+        auth.jwt()->'user_metadata'->>'full_name',
+        split_part(user_email, '@', 1),
+        'Kullanıcı'
+    );
 begin
-    select id, email, email_confirmed_at, raw_user_meta_data
-    into auth_user
-    from auth.users
-    where id = auth.uid();
-
-    if auth_user.id is null then
+    if user_id is null then
         raise exception 'not authenticated';
+    end if;
+
+    perform set_config('row_security', 'off', true);
+
+    select * into profile from public.users where id = user_id;
+    if found then
+        return profile;
     end if;
 
     insert into public.users (
@@ -30,17 +39,17 @@ begin
         active
     )
     values (
-        auth_user.id,
-        coalesce(auth_user.raw_user_meta_data->>'full_name', split_part(auth_user.email, '@', 1)),
-        auth_user.email,
+        user_id,
+        user_name,
+        coalesce(nullif(user_email, ''), user_id::text || '@users.local'),
         'user',
-        auth_user.email_confirmed_at is not null,
-        coalesce((auth_user.raw_user_meta_data->>'kvkk_consent')::boolean, false),
+        coalesce((auth.jwt()->>'email_confirmed')::boolean, false),
+        coalesce((auth.jwt()->'user_metadata'->>'kvkk_consent')::boolean, false),
         true
     )
     on conflict (id) do update
     set
-        email = excluded.email,
+        email = coalesce(excluded.email, public.users.email),
         full_name = coalesce(public.users.full_name, excluded.full_name),
         updated_at = now()
     returning * into profile;
@@ -128,3 +137,37 @@ end;
 $$;
 
 grant execute on function public.delete_own_task(uuid) to authenticated;
+
+-- Tablolar yoksa oluştur
+create table if not exists public.tasks (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references public.users(id) on delete cascade,
+    title text not null,
+    description text,
+    date date not null,
+    completed boolean not null default false,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+alter table public.tasks enable row level security;
+
+drop policy if exists "users can read own tasks" on public.tasks;
+create policy "users can read own tasks"
+    on public.tasks for select using (auth.uid() = user_id);
+
+drop policy if exists "users can insert own tasks" on public.tasks;
+create policy "users can insert own tasks"
+    on public.tasks for insert with check (auth.uid() = user_id);
+
+drop policy if exists "users can update own tasks" on public.tasks;
+create policy "users can update own tasks"
+    on public.tasks for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "users can delete own tasks" on public.tasks;
+create policy "users can delete own tasks"
+    on public.tasks for delete using (auth.uid() = user_id);
+
+drop policy if exists "admins can read all tasks" on public.tasks;
+create policy "admins can read all tasks"
+    on public.tasks for select using (public.is_admin());

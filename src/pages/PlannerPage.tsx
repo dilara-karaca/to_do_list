@@ -11,7 +11,6 @@ import { isSupabaseConfigured } from '../lib/supabase';
 import {
     collectTaskIds,
     deleteSingleTask,
-    ensureTaskStorageReady,
     fetchOwnTasks,
     syncTaskMapForUser,
     upsertSingleTask,
@@ -72,15 +71,6 @@ export function PlannerPage() {
             setRemoteReady(false);
 
             if (isSupabaseConfigured) {
-                const ready = await ensureTaskStorageReady();
-                if (cancelled) {
-                    return;
-                }
-
-                if (!ready.ok) {
-                    setSyncError(ready.message ?? 'Görev kaydı hazırlanamadı.');
-                }
-
                 const remoteTasks = await fetchOwnTasks(user.id);
                 if (cancelled) {
                     return;
@@ -101,7 +91,6 @@ export function PlannerPage() {
                 if (Object.keys(legacyTasks).length) {
                     setTaskMap(legacyTasks);
                     previousTaskIdsRef.current = collectTaskIds(legacyTasks);
-                    await syncTaskMapForUser(user.id, legacyTasks, new Set());
                     saveTaskMapForUser(user.id, legacyTasks);
                     setTasksLoading(false);
                     setRemoteReady(true);
@@ -140,14 +129,12 @@ export function PlannerPage() {
             return;
         }
 
-        const result = await syncTaskMapForUser(user.id, nextTaskMap, previousIds);
+        const result = await syncTaskMapForUser(user, nextTaskMap, previousIds);
         if (result.ok) {
             previousTaskIdsRef.current = collectTaskIds(nextTaskMap);
             setSyncError('');
-        } else if (result.message) {
-            setSyncError(result.message);
         }
-    }, [remoteReady, user?.id]);
+    }, [remoteReady, user]);
 
     useEffect(() => {
         if (!user?.id || !remoteReady) {
@@ -162,12 +149,18 @@ export function PlannerPage() {
     }, [taskMap, persistTasks, remoteReady, user?.id]);
 
     useEffect(() => {
+        if (!user?.id) {
+            setSyncError('');
+        }
+    }, [user?.id]);
+
+    useEffect(() => {
         const flushOnExit = () => {
             if (!user?.id || !remoteReady || !isSupabaseConfigured) {
                 return;
             }
 
-            void syncTaskMapForUser(user.id, taskMapRef.current, previousTaskIdsRef.current);
+            void syncTaskMapForUser(user, taskMapRef.current, previousTaskIdsRef.current);
         };
 
         window.addEventListener('beforeunload', flushOnExit);
@@ -202,7 +195,7 @@ export function PlannerPage() {
         }
 
         if (removedTaskId) {
-            const result = await deleteSingleTask(user.id, removedTaskId);
+            const result = await deleteSingleTask(user.id, removedTaskId, user);
             if (result.ok) {
                 previousTaskIdsRef.current.delete(removedTaskId);
                 setSyncError('');
@@ -213,7 +206,7 @@ export function PlannerPage() {
         }
 
         for (const task of nextTasks) {
-            const result = await upsertSingleTask(user.id, activeDateKey, task);
+            const result = await upsertSingleTask(user.id, activeDateKey, task, user);
             if (result.ok) {
                 previousTaskIdsRef.current.add(task.id);
                 setSyncError('');

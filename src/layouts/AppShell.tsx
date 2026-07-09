@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, KeyRound, LogOut, Shield, User } from 'lucide-react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { UserAvatar } from '../components/UserAvatar/UserAvatar';
 import { useAuth } from '../auth/AuthProvider';
 import { Motion } from '../utils/motion';
@@ -12,6 +12,7 @@ const roleLabel: Record<string, string> = {
 
 export function AppShell() {
     const { user, signOut } = useAuth();
+    const navigate = useNavigate();
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     const location = useLocation();
@@ -127,7 +128,9 @@ export function AppShell() {
                                         className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-medium text-rose-600 transition hover:bg-rose-50"
                                         onClick={() => {
                                             setMenuOpen(false);
-                                            void signOut();
+                                            void signOut().then(() => {
+                                                navigate('/login', { replace: true });
+                                            });
                                         }}
                                     >
                                         <LogOut className="h-4 w-4" />

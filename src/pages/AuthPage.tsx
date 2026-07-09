@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../auth/AuthProvider';
+import { useAuth, hasJustSignedOut } from '../auth/AuthProvider';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { buildAuthTransferPath, parseAuthUrlParams } from '../utils/authSession';
 import { Motion } from '../utils/motion';
@@ -17,6 +17,7 @@ export function AuthPage() {
     const [submitting, setSubmitting] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
+    const [blockAutoLogin] = useState(() => hasJustSignedOut());
 
     const redirectTo = useMemo(() => {
         const state = location.state as { from?: string; message?: string } | null;
@@ -106,7 +107,7 @@ export function AuthPage() {
         return <div className="grid min-h-screen place-items-center text-slate-500">Oturum kontrol ediliyor...</div>;
     }
 
-    if (!authLoading && authenticated && mode === 'login') {
+    if (!authLoading && authenticated && mode === 'login' && !blockAutoLogin) {
         return <Navigate to={redirectTo} replace />;
     }
 

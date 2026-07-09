@@ -1,5 +1,7 @@
+import type { AppUser } from '../types/auth';
 import type { DbTaskRow } from '../types/admin';
 import type { Task, TaskMap } from '../types/task';
+import { ensureUserProfile } from './adminService';
 import { isSupabaseConfigured, supabase } from './supabase';
 
 const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap =>
@@ -17,19 +19,49 @@ const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap =>
         return accumulator;
     }, {});
 
-export async function ensureTaskStorageReady(): Promise<{ ok: boolean; message?: string }> {
-    if (!isSupabaseConfigured || !supabase) {
-        return { ok: false, message: 'Supabase yapılandırılmamış.' };
+const rpcMissing = (message: string) =>
+    /could not find the function|schema cache|PGRST202/i.test(message);
+
+const formatTaskError = (error: unknown) => {
+    if (error instanceof TypeError && /failed to fetch/i.test(error.message)) {
+        return 'Supabase bağlantısı kurulamadı. İnternet bağlantını ve Supabase SQL kurulumunu kontrol et.';
     }
 
-    const { error } = await supabase.rpc('ensure_own_profile');
-
-    if (error) {
-        console.error('[tasks] ensure_own_profile failed', error.message);
-        return { ok: false, message: error.message };
+    if (error instanceof Error) {
+        return error.message;
     }
 
-    return { ok: true };
+    return 'Görev kaydı başarısız oldu.';
+};
+
+export async function ensureTaskStorageReady(user: AppUser | null): Promise<{ ok: boolean; message?: string }> {
+    if (!isSupabaseConfigured || !supabase || !user) {
+        return { ok: false, message: 'Kullanıcı oturumu bulunamadı.' };
+    }
+
+    try {
+        const { error: rpcError } = await supabase.rpc('ensure_own_profile');
+
+        if (!rpcError) {
+            return { ok: true };
+        }
+
+        const profile = await ensureUserProfile(user);
+        if (profile) {
+            return { ok: true };
+        }
+
+        if (rpcMissing(rpcError.message)) {
+            return {
+                ok: false,
+                message: 'Supabase görev fonksiyonları kurulmamış. SQL Editor\'da fix-tasks.sql dosyasını çalıştır.',
+            };
+        }
+
+        return { ok: false, message: rpcError.message };
+    } catch (error) {
+        return { ok: false, message: formatTaskError(error) };
+    }
 }
 
 export async function fetchOwnTasks(userId: string): Promise<TaskMap> {
@@ -37,32 +69,27 @@ export async function fetchOwnTasks(userId: string): Promise<TaskMap> {
         return {};
     }
 
-    const { data: rpcData, error: rpcError } = await supabase.rpc('get_own_tasks');
+    try {
+        const { data: rpcData, error: rpcError } = await supabase.rpc('get_own_tasks');
 
-    if (!rpcError && Array.isArray(rpcData)) {
-        const rows = rpcData as DbTaskRow[];
-        const ownRows = rows.filter((row) => row.user_id === userId);
-        return mapRowsToTaskMap(ownRows);
-    }
-
-    if (rpcError) {
-        console.warn('[tasks] get_own_tasks failed', rpcError.message);
-    }
-
-    const { data, error } = await supabase
-        .from('tasks')
-        .select('*')
-        .eq('user_id', userId)
-        .order('date', { ascending: false });
-
-    if (error || !data) {
-        if (error) {
-            console.warn('[tasks] fetch tasks failed', error.message);
+        if (!rpcError && Array.isArray(rpcData)) {
+            return mapRowsToTaskMap((rpcData as DbTaskRow[]).filter((row) => row.user_id === userId));
         }
+
+        const { data, error } = await supabase
+            .from('tasks')
+            .select('*')
+            .eq('user_id', userId)
+            .order('date', { ascending: false });
+
+        if (error || !data) {
+            return {};
+        }
+
+        return mapRowsToTaskMap(data as DbTaskRow[]);
+    } catch {
         return {};
     }
-
-    return mapRowsToTaskMap(data as DbTaskRow[]);
 }
 
 export async function fetchUserTasksById(userId: string): Promise<TaskMap> {
@@ -70,21 +97,25 @@ export async function fetchUserTasksById(userId: string): Promise<TaskMap> {
         return {};
     }
 
-    const { data, error } = await supabase
-        .from('tasks')
-        .select('*')
-        .eq('user_id', userId)
-        .order('date', { ascending: false });
+    try {
+        const { data, error } = await supabase
+            .from('tasks')
+            .select('*')
+            .eq('user_id', userId)
+            .order('date', { ascending: false });
 
-    if (error || !data) {
+        if (error || !data) {
+            return {};
+        }
+
+        return mapRowsToTaskMap(data as DbTaskRow[]);
+    } catch {
         return {};
     }
-
-    return mapRowsToTaskMap(data as DbTaskRow[]);
 }
 
 export async function syncTaskMapForUser(
-    userId: string,
+    user: AppUser,
     taskMap: TaskMap,
     previousTaskIds?: Set<string>,
 ): Promise<{ ok: boolean; message?: string }> {
@@ -92,102 +123,138 @@ export async function syncTaskMapForUser(
         return { ok: false, message: 'Supabase yapılandırılmamış.' };
     }
 
-    const ready = await ensureTaskStorageReady();
-    if (!ready.ok) {
-        return ready;
+    const currentTaskIds = collectTaskIds(taskMap);
+    const removedTaskIds = previousTaskIds
+        ? [...previousTaskIds].filter((taskId) => !currentTaskIds.has(taskId))
+        : [];
+    const hasUpserts = Object.values(taskMap).some((tasks) => tasks.length > 0);
+
+    if (!removedTaskIds.length && !hasUpserts) {
+        return { ok: true };
     }
 
-    const currentTaskIds = collectTaskIds(taskMap);
+    try {
+        const ready = await ensureTaskStorageReady(user);
+        if (!ready.ok) {
+            return ready;
+        }
 
-    if (previousTaskIds?.size) {
-        const removedTaskIds = [...previousTaskIds].filter((taskId) => !currentTaskIds.has(taskId));
         for (const taskId of removedTaskIds) {
-            const deleted = await deleteSingleTask(userId, taskId);
+            const deleted = await deleteSingleTask(user.id, taskId, user);
             if (!deleted.ok) {
                 return deleted;
             }
         }
-    }
 
-    for (const [date, tasks] of Object.entries(taskMap)) {
-        for (const task of tasks) {
-            const saved = await upsertSingleTask(userId, date, task);
-            if (!saved.ok) {
-                return saved;
+        for (const [date, tasks] of Object.entries(taskMap)) {
+            for (const task of tasks) {
+                const saved = await upsertSingleTask(user.id, date, task, user);
+                if (!saved.ok) {
+                    return saved;
+                }
             }
         }
-    }
 
-    return { ok: true };
+        return { ok: true };
+    } catch (error) {
+        return { ok: false, message: formatTaskError(error) };
+    }
 }
 
 export async function upsertSingleTask(
     userId: string,
     date: string,
     task: Task,
+    user?: AppUser | null,
 ): Promise<{ ok: boolean; message?: string }> {
     if (!isSupabaseConfigured || !supabase) {
         return { ok: false, message: 'Supabase yapılandırılmamış.' };
     }
 
-    const { error } = await supabase.rpc('upsert_own_task', {
-        p_id: task.id,
-        p_title: task.text,
-        p_description: task.description ?? null,
-        p_date: date,
-        p_completed: task.completed,
-        p_created_at: task.createdAt,
-    });
-
-    if (error) {
-        console.error('[tasks] upsert_own_task failed', error.message, { userId, taskId: task.id });
-
-        const { error: fallbackError } = await supabase.from('tasks').upsert(
-            {
-                id: task.id,
-                user_id: userId,
-                title: task.text,
-                description: task.description ?? null,
-                date,
-                completed: task.completed,
-                created_at: task.createdAt,
-            },
-            { onConflict: 'id' },
-        );
-
-        if (fallbackError) {
-            return { ok: false, message: fallbackError.message };
+    try {
+        if (user) {
+            const ready = await ensureTaskStorageReady(user);
+            if (!ready.ok) {
+                return ready;
+            }
         }
-    }
 
-    return { ok: true };
+        const payload = {
+            id: task.id,
+            user_id: userId,
+            title: task.text,
+            description: task.description ?? null,
+            date,
+            completed: task.completed,
+            created_at: task.createdAt,
+        };
+
+        const { error: rpcError } = await supabase.rpc('upsert_own_task', {
+            p_id: task.id,
+            p_title: task.text,
+            p_description: task.description ?? null,
+            p_date: date,
+            p_completed: task.completed,
+            p_created_at: task.createdAt,
+        });
+
+        if (!rpcError) {
+            return { ok: true };
+        }
+
+        const { error: upsertError } = await supabase.from('tasks').upsert(payload, { onConflict: 'id' });
+
+        if (!upsertError) {
+            return { ok: true };
+        }
+
+        if (rpcMissing(rpcError.message)) {
+            return {
+                ok: false,
+                message: 'Supabase\'de fix-tasks.sql çalıştırılmamış olabilir.',
+            };
+        }
+
+        return { ok: false, message: upsertError.message };
+    } catch (error) {
+        return { ok: false, message: formatTaskError(error) };
+    }
 }
 
 export async function deleteSingleTask(
     userId: string,
     taskId: string,
+    user?: AppUser | null,
 ): Promise<{ ok: boolean; message?: string }> {
     if (!isSupabaseConfigured || !supabase) {
         return { ok: false, message: 'Supabase yapılandırılmamış.' };
     }
 
-    const { error } = await supabase.rpc('delete_own_task', { p_id: taskId });
+    try {
+        if (user) {
+            await ensureTaskStorageReady(user);
+        }
 
-    if (error) {
-        console.error('[tasks] delete_own_task failed', error.message, { userId, taskId });
+        const { error: rpcError } = await supabase.rpc('delete_own_task', { p_id: taskId });
 
-        const { error: fallbackError } = await supabase
+        if (!rpcError) {
+            return { ok: true };
+        }
+
+        const { error: deleteError } = await supabase
             .from('tasks')
             .delete()
             .eq('user_id', userId)
             .eq('id', taskId);
 
-        if (fallbackError) {
-            return { ok: false, message: fallbackError.message };
+        if (deleteError) {
+            return { ok: false, message: deleteError.message };
         }
-    }
 
-    return { ok: true };
+        return { ok: true };
+    } catch (error) {
+        return { ok: false, message: formatTaskError(error) };
+    }
 }
 
 export function collectTaskIds(taskMap: TaskMap) {
