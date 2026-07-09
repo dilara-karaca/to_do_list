@@ -157,7 +157,31 @@ $$;
 
 grant execute on function public.get_admin_users_with_stats() to authenticated;
 
--- 6) ensure_own_profile: mevcut admin rolünü koru
+-- 6) Profil okuma RPC (RLS bypass)
+create or replace function public.get_own_profile()
+returns public.users
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+declare
+    profile public.users;
+begin
+    perform set_config('row_security', 'off', true);
+
+    select * into profile
+    from public.users
+    where id = auth.uid()
+    limit 1;
+
+    return profile;
+end;
+$$;
+
+grant execute on function public.get_own_profile() to authenticated;
+
+-- 7) ensure_own_profile: mevcut admin rolünü koru
 create or replace function public.ensure_own_profile()
 returns public.users
 language plpgsql
@@ -216,3 +240,6 @@ end;
 $$;
 
 grant execute on function public.ensure_own_profile() to authenticated;
+
+-- 8) Doğrulama sorgusu (sonuçta role = admin görmelisin)
+-- select id, email, role from public.users where lower(email) = 'dilarakaraca550@gmail.com';

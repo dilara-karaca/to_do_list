@@ -1,22 +1,10 @@
 import type { AppUser } from '../types/auth';
 import type { ActivityLog, AdminStats, AdminUserSummary, DbTaskRow, DbUserRow } from '../types/admin';
-import type { Task, TaskMap } from '../types/task';
+import type { TaskMap } from '../types/task';
+import { ensureUserProfile, fetchUserProfile, mapDbUser } from './profileService';
 import { isSupabaseConfigured, supabase } from './supabase';
 
-const mapDbUser = (row: DbUserRow): AppUser => ({
-    id: row.id,
-    fullName: row.full_name,
-    email: row.email,
-    role: row.role?.trim() === 'admin' ? 'admin' : 'user',
-    emailConfirmed: row.email_confirmed,
-    kvkkConsent: row.kvkk_consent,
-    kvkkConsentAt: row.kvkk_consent_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    lastSignInAt: row.last_sign_in_at,
-    active: row.active,
-    avatarUrl: null,
-});
+export { ensureUserProfile, fetchUserProfile, mapDbUser, BOOTSTRAP_ADMIN_EMAIL } from './profileService';
 
 type AdminUserStatsRow = DbUserRow & {
     task_count?: number;
@@ -48,100 +36,7 @@ const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap =>
         return accumulator;
     }, {});
 
-const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
-
-const PROFILE_FETCH_TIMEOUT_MS = 5000;
-
-export async function fetchUserProfile(userId: string): Promise<AppUser | null> {
-    if (!isSupabaseConfigured || !supabase) {
-        return null;
-    }
-
-    try {
-        const rpcResult = await Promise.race([
-            supabase.rpc('get_own_profile'),
-            wait(PROFILE_FETCH_TIMEOUT_MS).then(() => ({ timedOut: true as const })),
-        ]);
-
-        if (!('timedOut' in rpcResult)) {
-            const { data, error } = rpcResult;
-
-            if (!error && data && typeof data === 'object' && 'id' in data) {
-                const row = data as DbUserRow;
-                if (row.id === userId) {
-                    return mapDbUser(row);
-                }
-            }
-        }
-
-        const tableResult = await Promise.race([
-            supabase
-                .from('users')
-                .select('*')
-                .eq('id', userId)
-                .maybeSingle(),
-            wait(PROFILE_FETCH_TIMEOUT_MS).then(() => ({ timedOut: true as const })),
-        ]);
-
-        if ('timedOut' in tableResult) {
-            return null;
-        }
-
-        const { data, error } = tableResult;
-
-        if (error || !data) {
-            return null;
-        }
-
-        return mapDbUser(data as DbUserRow);
-    } catch {
-        return null;
-    }
-}
-
-export async function ensureUserProfile(user: AppUser): Promise<AppUser | null> {
-    if (!isSupabaseConfigured || !supabase) {
-        return null;
-    }
-
-    const existing = await fetchUserProfile(user.id);
-    if (existing) {
-        return existing;
-    }
-
-    const { data: rpcData, error: rpcError } = await supabase.rpc('ensure_own_profile');
-
-    if (!rpcError && rpcData && typeof rpcData === 'object' && 'id' in rpcData) {
-        return mapDbUser(rpcData as DbUserRow);
-    }
-
-    const { data, error } = await supabase
-        .from('users')
-        .insert({
-            id: user.id,
-            full_name: user.fullName,
-            email: user.email,
-            role: 'user',
-            active: user.active,
-            email_confirmed: user.emailConfirmed,
-            kvkk_consent: user.kvkkConsent,
-            kvkk_consent_at: user.kvkkConsentAt ?? null,
-            last_sign_in_at: user.lastSignInAt ?? null,
-        })
-        .select('*')
-        .maybeSingle();
-
-    if (error || !data) {
-        if (import.meta.env.DEV) {
-            console.warn('[auth] ensureUserProfile failed', error?.message, { userId: user.id });
-        }
-        return null;
-    }
-
-    return mapDbUser(data as DbUserRow);
-}
-
-export async function fetchAdminUsers(): Promise<AppUser[]> {
+export async function fetchAdminUsers() {
     const summaries = await fetchAdminUsersWithStats();
     return summaries;
 }

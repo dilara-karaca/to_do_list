@@ -3,6 +3,7 @@ import type { User } from '@supabase/supabase-js';
 import { authRedirectUrl, AVATAR_BUCKET, isSupabaseConfigured, resetPasswordRedirectUrl, supabase } from '../lib/supabase';
 import type { AppUser, AuthSessionState, UserRole } from '../types/auth';
 import { fetchAdminUsers, ensureUserProfile, fetchUserProfile, updateAdminUser } from '../lib/adminService';
+import { BOOTSTRAP_ADMIN_EMAIL } from '../lib/profileService';
 import { getAvatarExtension, prepareAvatarImage, readFileAsDataUrl, validateAvatarFile } from '../utils/avatar';
 import { getResetCooldownRemaining, mapAuthErrorMessage, setResetCooldown } from '../utils/authErrors';
 import { mockUsers } from './mockData';
@@ -142,11 +143,14 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
         ? sessionUser.user_metadata.avatar_url
         : null;
 
+    const email = sessionUser.email ?? storedProfile?.email ?? '';
+    const bootstrapAdmin = email.trim().toLowerCase() === BOOTSTRAP_ADMIN_EMAIL;
+
     const fromSession: AppUser = {
         id: sessionUser.id,
         fullName: String(sessionUser.user_metadata?.full_name ?? sessionUser.email ?? ''),
-        email: sessionUser.email ?? '',
-        role: storedProfile?.role === 'admin' ? 'admin' : 'user',
+        email,
+        role: bootstrapAdmin ? 'admin' : 'user',
         emailConfirmed: Boolean(sessionUser.email_confirmed_at),
         kvkkConsent: Boolean(sessionUser.user_metadata?.kvkk_consent),
         kvkkConsentAt: typeof sessionUser.user_metadata?.kvkk_consent_at === 'string'
@@ -167,15 +171,16 @@ const buildAppUserFromSession = (sessionUser: User, storedProfile: AppUser | nul
         ...fromSession,
         fullName: storedProfile.fullName || fromSession.fullName,
         email: storedProfile.email || fromSession.email,
-        role: storedProfile.role === 'admin' ? 'admin' : fromSession.role,
+        role: storedProfile.role === 'admin' || bootstrapAdmin ? 'admin' : fromSession.role,
         kvkkConsent: storedProfile.kvkkConsent || fromSession.kvkkConsent,
         kvkkConsentAt: storedProfile.kvkkConsentAt ?? fromSession.kvkkConsentAt,
+        avatarUrl: storedProfile.avatarUrl ?? fromSession.avatarUrl,
     };
 };
 
 const hydrateAppUser = async (sessionUser: User): Promise<AppUser> => {
     const baseUser = buildAppUserFromSession(sessionUser, getStoredProfile(sessionUser.id));
-    let dbUser = await fetchUserProfile(sessionUser.id);
+    let dbUser = await fetchUserProfile(sessionUser.id, 3);
 
     if (!dbUser) {
         dbUser = await ensureUserProfile(baseUser);
@@ -192,7 +197,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<AppUser | null>(null);
     const [users, setUsers] = useState<AppUser[]>(() => (isSupabaseConfigured ? [] : readUsers()));
     const [loading, setLoading] = useState(true);
-    const hydrateInFlightRef = useRef<string | null>(null);
+    const hydrateInFlightRef = useRef<Promise<void> | null>(null);
     const signedOutRef = useRef(false);
 
     const applySessionUser = useCallback(async (sessionUser: User | null) => {
@@ -201,41 +206,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return;
         }
 
-        if (hydrateInFlightRef.current === sessionUser.id) {
-            return;
+        const runHydration = async () => {
+            try {
+                const nextUser = await hydrateAppUser(sessionUser);
+                setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
+                setUser(nextUser);
+                saveStoredProfile(nextUser);
+
+                if (nextUser.role === 'admin') {
+                    void fetchAdminUsers()
+                        .then((adminUsers) => {
+                            if (adminUsers.length) {
+                                setUsers(adminUsers);
+                            }
+                        })
+                        .catch(() => {
+                            // Admin list is optional.
+                        });
+                }
+            } catch (error) {
+                if (import.meta.env.DEV) {
+                    console.warn('[auth] applySessionUser failed', error);
+                }
+
+                const fallbackUser = buildAppUserFromSession(sessionUser, getStoredProfile(sessionUser.id));
+                setUsers((currentUsers) => mergeUsers(currentUsers, fallbackUser));
+                setUser(fallbackUser);
+                saveStoredProfile(fallbackUser);
+            }
+        };
+
+        if (hydrateInFlightRef.current) {
+            await hydrateInFlightRef.current;
         }
 
-        hydrateInFlightRef.current = sessionUser.id;
-
-        try {
-            const nextUser = await hydrateAppUser(sessionUser);
-            setUsers((currentUsers) => mergeUsers(currentUsers, nextUser));
-            setUser(nextUser);
-            saveStoredProfile(nextUser);
-
-            if (nextUser.role === 'admin') {
-                void fetchAdminUsers()
-                    .then((adminUsers) => {
-                        if (adminUsers.length) {
-                            setUsers(adminUsers);
-                        }
-                    })
-                    .catch(() => {
-                        // Admin list is optional.
-                    });
-            }
-        } catch (error) {
-            if (import.meta.env.DEV) {
-                console.warn('[auth] applySessionUser failed', error);
-            }
-
-            const fallbackUser = buildAppUserFromSession(sessionUser, getStoredProfile(sessionUser.id));
-            setUsers((currentUsers) => mergeUsers(currentUsers, fallbackUser));
-            setUser(fallbackUser);
-            saveStoredProfile(fallbackUser);
-        } finally {
-            hydrateInFlightRef.current = null;
-        }
+        const hydrationPromise = runHydration();
+        hydrateInFlightRef.current = hydrationPromise;
+        await hydrationPromise;
+        hydrateInFlightRef.current = null;
     }, []);
 
     useEffect(() => {
@@ -335,15 +343,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     }, [user, users]);
 
+    useEffect(() => {
+        if (!isSupabaseConfigured || !supabase || !user?.id) {
+            return;
+        }
+
+        let cancelled = false;
+
+        const syncProfile = async () => {
+            const freshProfile = await fetchUserProfile(user.id, 2);
+            if (cancelled || !freshProfile) {
+                return;
+            }
+
+            setUser((currentUser) => {
+                if (!currentUser || currentUser.id !== freshProfile.id) {
+                    return currentUser;
+                }
+
+                if (
+                    currentUser.role === freshProfile.role
+                    && currentUser.fullName === freshProfile.fullName
+                    && currentUser.active === freshProfile.active
+                    && currentUser.emailConfirmed === freshProfile.emailConfirmed
+                ) {
+                    return currentUser;
+                }
+
+                const merged = mergeDbProfile(currentUser, freshProfile);
+                saveStoredProfile(merged);
+                return merged;
+            });
+        };
+
+        void syncProfile();
+        const timeoutId = window.setTimeout(() => {
+            void syncProfile();
+        }, 2500);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timeoutId);
+        };
+    }, [user?.id]);
+
     const signIn = async (email: string, password: string) => {
         if (isSupabaseConfigured && supabase) {
             signedOutRef.current = false;
             clearJustSignedOut();
+            localStorage.removeItem(profileStorageKey);
 
-            const { error } = await supabase.auth.signInWithPassword({ email, password });
+            const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
             if (error) {
                 return { ok: false, message: error.message };
+            }
+
+            if (data.user) {
+                await applySessionUser(data.user);
             }
 
             return { ok: true, message: 'Giriş başarılı.' };
