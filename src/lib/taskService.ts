@@ -4,8 +4,8 @@ import type { Task, TaskMap } from '../types/task';
 import { ensureUserProfile } from './adminService';
 import { isSupabaseConfigured, supabase } from './supabase';
 
-const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap =>
-    rows.reduce<TaskMap>((accumulator, row) => {
+const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap => {
+    const taskMap = rows.reduce<TaskMap>((accumulator, row) => {
         const list = accumulator[row.date] ?? [];
         list.push({
             id: row.id,
@@ -19,6 +19,14 @@ const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap =>
         return accumulator;
     }, {});
 
+    for (const date of Object.keys(taskMap)) {
+        taskMap[date] = [...taskMap[date]].sort(
+            (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+        );
+    }
+
+    return taskMap;
+};
 const rpcMissing = (message: string) =>
     /could not find the function|schema cache|PGRST202/i.test(message);
 

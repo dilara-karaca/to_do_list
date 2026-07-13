@@ -145,8 +145,6 @@ export default function DayModal({
                             ) : null}
                         </div>
 
-                        <TaskList tasks={tasks} editable={editable} onToggle={onToggleTask} onDelete={onDeleteTask} />
-
                         {editable && isComposerOpen ? (
                             <AnimatePresence>
                                 <Motion.div
@@ -154,9 +152,9 @@ export default function DayModal({
                                     animate={{ opacity: 1, height: 'auto', y: 0 }}
                                     exit={{ opacity: 0, height: 0, y: -6 }}
                                     transition={{ duration: 0.25 }}
-                                    className="overflow-hidden"
+                                    className="mb-4 overflow-hidden"
                                 >
-                                    <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                                         <div className="relative flex-1">
                                             <input
                                                 ref={inputRef}
@@ -226,6 +224,8 @@ export default function DayModal({
                                 </Motion.div>
                             </AnimatePresence>
                         ) : null}
+
+                        <TaskList tasks={tasks} editable={editable} onToggle={onToggleTask} onDelete={onDeleteTask} />
                     </div>
                 </div>
             </Motion.section>

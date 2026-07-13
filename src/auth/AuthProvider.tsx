@@ -261,40 +261,106 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (isSupabaseConfigured && client) {
             let active = true;
+            let settled = false;
 
-            const bootstrap = async () => {
-                if (hasJustSignedOut()) {
-                    setUser(null);
-                    setLoading(false);
+            const finishLoading = () => {
+                if (!active) {
                     return;
                 }
+                setLoading(false);
+            };
 
-                const { data, error } = await client.auth.getSession();
-
+            const settleSession = async (sessionUser: User | null) => {
                 if (!active) {
                     return;
                 }
 
-                if (error) {
-                    setUser(null);
-                    setLoading(false);
+                if (settled) {
+                    if (sessionUser && !hasJustSignedOut() && !signedOutRef.current) {
+                        void applySessionUser(sessionUser);
+                    }
                     return;
                 }
+                settled = true;
 
-                if (!data.session?.user) {
-                    setUser(null);
-                    setLoading(false);
-                    return;
+                try {
+                    if (hasJustSignedOut() || !sessionUser) {
+                        setUser(null);
+                        return;
+                    }
+
+                    // Show app/login immediately from JWT; refine profile in background.
+                    const quickUser = buildAppUserFromSession(sessionUser, getStoredProfile(sessionUser.id));
+                    setUsers((currentUsers) => mergeUsers(currentUsers, quickUser));
+                    setUser(quickUser);
+                    finishLoading();
+
+                    await applySessionUser(sessionUser);
+                } catch (error) {
+                    if (import.meta.env.DEV) {
+                        console.warn('[auth] settleSession failed', error);
+                    }
+                    if (active) {
+                        setUser(null);
+                    }
+                } finally {
+                    finishLoading();
                 }
+            };
 
-                await applySessionUser(data.session.user);
+            const bootstrap = async () => {
+                try {
+                    if (hasJustSignedOut()) {
+                        settled = true;
+                        setUser(null);
+                        finishLoading();
+                        return;
+                    }
 
-                if (active) {
-                    setLoading(false);
+                    const sessionResult = await Promise.race([
+                        client.auth.getSession(),
+                        new Promise<'timeout'>((resolve) => {
+                            window.setTimeout(() => resolve('timeout'), 5_000);
+                        }),
+                    ]);
+
+                    if (!active || settled) {
+                        return;
+                    }
+
+                    if (sessionResult === 'timeout') {
+                        // onAuthStateChange INITIAL_SESSION or safety timer will finish.
+                        return;
+                    }
+
+                    if (sessionResult.error) {
+                        await settleSession(null);
+                        return;
+                    }
+
+                    await settleSession(sessionResult.data.session?.user ?? null);
+                } catch (error) {
+                    if (import.meta.env.DEV) {
+                        console.warn('[auth] bootstrap failed', error);
+                    }
+                    if (!settled) {
+                        settled = true;
+                        setUser(null);
+                        finishLoading();
+                    }
                 }
             };
 
             void bootstrap();
+
+            const safetyTimer = window.setTimeout(() => {
+                if (!active || settled) {
+                    return;
+                }
+                settled = true;
+                setUser(null);
+                finishLoading();
+            }, 8_000);
 
             const { data: subscription } = client.auth.onAuthStateChange((event, session) => {
                 if (import.meta.env.DEV) {
@@ -302,19 +368,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 }
 
                 if (event === 'INITIAL_SESSION') {
+                    void settleSession(session?.user ?? null);
                     return;
                 }
 
                 if (event === 'SIGNED_OUT' || !session?.user) {
                     setUser(null);
-                    setLoading(false);
+                    finishLoading();
                     return;
                 }
 
                 if (signedOutRef.current || hasJustSignedOut()) {
                     void client.auth.signOut({ scope: 'local' });
                     setUser(null);
-                    setLoading(false);
+                    finishLoading();
                     return;
                 }
 
@@ -327,6 +394,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             return () => {
                 active = false;
+                window.clearTimeout(safetyTimer);
                 subscription.subscription.unsubscribe();
             };
         }
