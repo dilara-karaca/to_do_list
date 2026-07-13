@@ -1,5 +1,7 @@
 import {
+    addDays,
     addMonths,
+    addWeeks,
     endOfMonth,
     format,
     isSameDay,
@@ -13,6 +15,8 @@ import {
     eachDayOfInterval,
 } from 'date-fns';
 import { tr } from 'date-fns/locale';
+import type { TaskRecurrence } from '../types/task';
+
 
 export const calendarWeekdays = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
 
@@ -43,3 +47,30 @@ export const isPastDate = (date: Date) => isBefore(startOfDay(date), startOfDay(
 export const clampMonth = (date: Date, delta: number) => addMonths(date, delta);
 
 export const toDate = (value: string) => parseISO(value);
+
+const recurrenceCounts: Record<TaskRecurrence, number> = {
+    daily: 30,
+    weekly: 12,
+    monthly: 12,
+};
+
+/** Start date included. Past days are skipped. */
+export const getRecurrenceDates = (startDate: Date, recurrence: TaskRecurrence): Date[] => {
+    const count = recurrenceCounts[recurrence];
+    const dates: Date[] = [];
+
+    for (let index = 0; index < count; index += 1) {
+        const nextDate =
+            recurrence === 'daily'
+                ? addDays(startDate, index)
+                : recurrence === 'weekly'
+                    ? addWeeks(startDate, index)
+                    : addMonths(startDate, index);
+
+        if (!isPastDate(nextDate)) {
+            dates.push(nextDate);
+        }
+    }
+
+    return dates;
+};

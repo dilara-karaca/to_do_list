@@ -4,10 +4,13 @@ import {
     KeyRound,
     LockKeyhole,
     Mail,
+    ShieldAlert,
     ShieldCheck,
     Sparkles,
+    Trash2,
 } from 'lucide-react';
 import { useMemo, useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { Motion } from '../utils/motion';
@@ -21,12 +24,15 @@ const passwordRules = [
 ];
 
 export function SettingsPage() {
-    const { user, changePassword, requestPasswordReset } = useAuth();
+    const { user, changePassword, requestPasswordReset, deleteAccount } = useAuth();
+    const navigate = useNavigate();
     const [showCurrentPassword, setShowCurrentPassword] = useState(false);
     const [showNewPassword, setShowNewPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [resetLoading, setResetLoading] = useState(false);
+    const [deleteLoading, setDeleteLoading] = useState(false);
+    const [confirmEmail, setConfirmEmail] = useState('');
     const [message, setMessage] = useState('');
     const [messageType, setMessageType] = useState<'success' | 'error'>('success');
 
@@ -77,6 +83,37 @@ export function SettingsPage() {
         setMessage(result.message);
         setMessageType(result.ok ? 'success' : 'error');
         setResetLoading(false);
+    };
+
+    const onDeleteAccount = async () => {
+        if (!user || deleteLoading) {
+            return;
+        }
+
+        if (confirmEmail.trim().toLowerCase() !== user.email.trim().toLowerCase()) {
+            setMessage('Hesabı silmek için e-posta adresini doğru yazmalısın.');
+            setMessageType('error');
+            return;
+        }
+
+        const confirmed = window.confirm(
+            'Hesabın, görevlerin, profilin ve tüm verilerin kalıcı olarak silinecek. Bu işlem geri alınamaz. Devam etmek istiyor musun?',
+        );
+        if (!confirmed) {
+            return;
+        }
+
+        setDeleteLoading(true);
+        setMessage('');
+
+        const result = await deleteAccount();
+        setMessage(result.message);
+        setMessageType(result.ok ? 'success' : 'error');
+        setDeleteLoading(false);
+
+        if (result.ok) {
+            navigate('/login', { replace: true });
+        }
     };
 
     if (!user) {
@@ -235,6 +272,51 @@ export function SettingsPage() {
                     </Motion.section>
                 </div>
             </div>
+
+            <Motion.section
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.35, delay: 0.12 }}
+                className="rounded-[32px] border border-rose-200 bg-rose-50/80 p-6 sm:p-8"
+            >
+                <div className="flex items-start gap-4">
+                    <div className="grid h-12 w-12 place-items-center rounded-2xl bg-rose-600 text-white">
+                        <ShieldAlert className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                        <h2 className="text-xl font-semibold text-rose-950">Hesabı ve Verileri Sil</h2>
+                        <p className="mt-1 text-sm leading-6 text-rose-800/80">
+                            Bu işlem hesabını, görevlerini, profil fotoğrafını ve tüm uygulama verilerini kalıcı olarak siler. Geri alınamaz.
+                        </p>
+                    </div>
+                </div>
+
+                <div className="mt-6 space-y-4">
+                    <label className="block">
+                        <span className="mb-2 block text-sm font-medium text-rose-900">
+                            Onaylamak için e-posta adresini yaz: <span className="font-semibold">{user.email}</span>
+                        </span>
+                        <input
+                            type="email"
+                            value={confirmEmail}
+                            onChange={(event) => setConfirmEmail(event.target.value)}
+                            placeholder={user.email}
+                            autoComplete="off"
+                            className="h-12 w-full rounded-2xl border border-rose-200 bg-white px-4 text-slate-900 outline-none transition focus:border-rose-400"
+                        />
+                    </label>
+
+                    <button
+                        type="button"
+                        onClick={() => void onDeleteAccount()}
+                        disabled={deleteLoading}
+                        className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-rose-600 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-60 sm:w-auto sm:min-w-[240px] sm:px-6"
+                    >
+                        <Trash2 className="h-4 w-4" />
+                        {deleteLoading ? 'Siliniyor...' : 'Hesabı Kalıcı Olarak Sil'}
+                    </button>
+                </div>
+            </Motion.section>
 
             {message ? (
                 <div className={`rounded-2xl border px-4 py-3 text-sm ${

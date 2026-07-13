@@ -44,3 +44,14 @@ export const loadSelectedDate = (): string | null => {
 export const saveSelectedDate = (dateKey: string) => {
     localStorage.setItem(SELECTED_DATE_KEY, dateKey);
 };
+
+export const clearTaskDataForUser = (userId: string) => {
+    try {
+        localStorage.removeItem(taskStorageKey(userId));
+        localStorage.removeItem(LEGACY_TASKS_KEY);
+        localStorage.removeItem(SELECTED_DATE_KEY);
+        localStorage.removeItem(LEGACY_SELECTED_DATE_KEY);
+    } catch {
+        // Ignore storage errors during account deletion.
+    }
+};

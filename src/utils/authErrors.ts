@@ -3,6 +3,21 @@ export function mapAuthErrorMessage(message: string, code?: string) {
     const normalizedCode = code?.toLowerCase() ?? '';
 
     if (
+        normalizedCode === 'invalid_credentials' ||
+        normalized.includes('invalid login credentials') ||
+        normalized.includes('invalid credentials')
+    ) {
+        return 'E-posta veya şifre hatalı.';
+    }
+
+    if (
+        normalizedCode === 'email_not_confirmed' ||
+        normalized.includes('email not confirmed')
+    ) {
+        return 'E-posta adresini doğrulaman gerekiyor. Gelen kutunu kontrol et.';
+    }
+
+    if (
         normalizedCode === 'over_email_send_rate_limit' ||
         normalized.includes('email rate limit exceeded') ||
         normalized.includes('over_email_send_rate_limit')

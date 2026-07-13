@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
     computeAdminStats,
     fetchActivityLogs,
+    fetchAdminUsersDetailed,
     fetchAdminUsersWithStats,
     fetchUserTasks,
 } from '../lib/adminService';
@@ -48,22 +49,22 @@ export function useAdminDashboardData(enabled: boolean) {
 
         try {
             const [usersResult, logsResult] = await Promise.allSettled([
-                fetchAdminUsersWithStats(),
+                fetchAdminUsersDetailed(),
                 fetchActivityLogs(12),
             ]);
 
-            const nextUsers = usersResult.status === 'fulfilled' ? usersResult.value : [];
+            const usersPayload = usersResult.status === 'fulfilled'
+                ? usersResult.value
+                : { users: [], source: 'none' as const, message: formatAdminError(usersResult.reason) };
+            const nextUsers = usersPayload.users;
             const nextLogs = logsResult.status === 'fulfilled' ? logsResult.value : [];
 
             setUsers(nextUsers);
             setStats(computeAdminStats(nextUsers));
             setLogs(nextLogs);
 
-            const failures = [usersResult, logsResult].filter((result) => result.status === 'rejected') as PromiseRejectedResult[];
-            if (failures.length) {
-                setError(formatAdminError(failures[0].reason));
-            } else if (!nextUsers.length) {
-                setError('Kullanıcı listesi boş. Supabase SQL Editor\'da fix-admin.sql dosyasını çalıştır.');
+            if (!nextUsers.length) {
+                setError(usersPayload.message || 'Kullanıcı listesi boş. Supabase SQL Editor\'da fix-admin-now.sql dosyasını çalıştır.');
             } else {
                 setError('');
             }
@@ -99,7 +100,7 @@ export function useAdminUsersData(enabled: boolean, fallbackUsers: AppUser[]) {
             const nextUsers = await fetchAdminUsersWithStats();
             setUsers(nextUsers.length ? nextUsers : mapFallbackSummaries(fallbackUsers));
             if (!nextUsers.length) {
-                setError('Kullanıcılar yüklenemedi. fix-admin.sql dosyasını Supabase\'de çalıştır.');
+                setError('Kullanıcılar yüklenemedi. fix-admin-now.sql dosyasını Supabase\'de çalıştır.');
             }
         } catch (caughtError) {
             setError(formatAdminError(caughtError));

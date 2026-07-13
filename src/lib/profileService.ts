@@ -34,8 +34,11 @@ export const mapDbUser = (row: DbUserRow): AppUser => ({
     avatarUrl: null,
 });
 
+export const isBootstrapAdminEmail = (email: string) =>
+    email.trim().toLowerCase() === BOOTSTRAP_ADMIN_EMAIL;
+
 const resolveBootstrapRole = (email: string): AppUser['role'] =>
-    email.trim().toLowerCase() === BOOTSTRAP_ADMIN_EMAIL ? 'admin' : 'user';
+    isBootstrapAdminEmail(email) ? 'admin' : 'user';
 
 async function fetchUserProfileOnce(userId: string): Promise<AppUser | null> {
     if (!isSupabaseConfigured || !supabase) {
@@ -85,6 +88,60 @@ export async function fetchUserProfile(userId: string, attempts = 3): Promise<Ap
     return null;
 }
 
+async function promoteOwnRoleToAdmin(userId: string): Promise<AppUser | null> {
+    if (!supabase) {
+        return null;
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc('claim_bootstrap_admin');
+    if (!rpcError) {
+        const rpcRow = normalizeDbUserRow(rpcData);
+        if (rpcRow?.id === userId) {
+            return mapDbUser(rpcRow);
+        }
+    } else if (import.meta.env.DEV) {
+        console.warn('[profile] claim_bootstrap_admin failed', rpcError.message);
+    }
+
+    const { data, error } = await supabase
+        .from('users')
+        .update({ role: 'admin', active: true, updated_at: new Date().toISOString() })
+        .eq('id', userId)
+        .select('*')
+        .maybeSingle();
+
+    if (error || !data) {
+        if (import.meta.env.DEV) {
+            console.warn('[profile] promoteOwnRoleToAdmin failed', error?.message);
+        }
+        return null;
+    }
+
+    return mapDbUser(data as DbUserRow);
+}
+
+/** Ensures bootstrap admin email has role=admin in public.users so admin RPCs/RLS work. */
+export async function ensureBootstrapAdminRole(user: AppUser): Promise<AppUser | null> {
+    if (!isSupabaseConfigured || !supabase || !isBootstrapAdminEmail(user.email)) {
+        return null;
+    }
+
+    let profile = await fetchUserProfile(user.id, 2);
+    if (!profile) {
+        profile = await ensureUserProfile({ ...user, role: 'admin' });
+    }
+
+    if (!profile) {
+        return null;
+    }
+
+    if (profile.role === 'admin') {
+        return profile;
+    }
+
+    return (await promoteOwnRoleToAdmin(user.id)) ?? { ...profile, role: 'admin' };
+}
+
 export async function ensureUserProfile(user: AppUser): Promise<AppUser | null> {
     if (!isSupabaseConfigured || !supabase) {
         return null;
@@ -92,6 +149,9 @@ export async function ensureUserProfile(user: AppUser): Promise<AppUser | null> 
 
     const existing = await fetchUserProfile(user.id, 2);
     if (existing) {
+        if (isBootstrapAdminEmail(user.email) && existing.role !== 'admin') {
+            return (await promoteOwnRoleToAdmin(user.id)) ?? { ...existing, role: 'admin' };
+        }
         return existing;
     }
 
@@ -103,7 +163,11 @@ export async function ensureUserProfile(user: AppUser): Promise<AppUser | null> 
 
     const ensuredRow = normalizeDbUserRow(rpcData);
     if (ensuredRow) {
-        return mapDbUser(ensuredRow);
+        const ensured = mapDbUser(ensuredRow);
+        if (isBootstrapAdminEmail(user.email) && ensured.role !== 'admin') {
+            return (await promoteOwnRoleToAdmin(user.id)) ?? { ...ensured, role: 'admin' };
+        }
+        return ensured;
     }
 
     const bootstrapRole = resolveBootstrapRole(user.email);

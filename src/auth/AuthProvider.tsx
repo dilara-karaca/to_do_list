@@ -3,9 +3,10 @@ import type { User } from '@supabase/supabase-js';
 import { authRedirectUrl, AVATAR_BUCKET, isSupabaseConfigured, resetPasswordRedirectUrl, supabase } from '../lib/supabase';
 import type { AppUser, AuthSessionState, UserRole } from '../types/auth';
 import { fetchAdminUsers, ensureUserProfile, fetchUserProfile, updateAdminUser } from '../lib/adminService';
-import { BOOTSTRAP_ADMIN_EMAIL } from '../lib/profileService';
+import { BOOTSTRAP_ADMIN_EMAIL, ensureBootstrapAdminRole } from '../lib/profileService';
 import { getAvatarExtension, prepareAvatarImage, readFileAsDataUrl, validateAvatarFile } from '../utils/avatar';
 import { getResetCooldownRemaining, mapAuthErrorMessage, setResetCooldown } from '../utils/authErrors';
+import { clearTaskDataForUser } from '../utils/storage';
 import { mockUsers } from './mockData';
 
 type AuthContextValue = AuthSessionState & {
@@ -13,6 +14,7 @@ type AuthContextValue = AuthSessionState & {
     signUp: (payload: { fullName: string; email: string; password: string; passwordConfirm: string; kvkkConsent: boolean }) => Promise<{ ok: boolean; message: string }>;
     requestPasswordReset: (email: string) => Promise<{ ok: boolean; message: string }>;
     changePassword: (payload: { currentPassword: string; newPassword: string; newPasswordConfirm: string }) => Promise<{ ok: boolean; message: string }>;
+    deleteAccount: () => Promise<{ ok: boolean; message: string }>;
     signOut: () => Promise<void>;
     updateRole: (userId: string, role: UserRole) => void;
     updateProfile: (userId: string, changes: Partial<AppUser>) => void;
@@ -128,7 +130,8 @@ export const clearJustSignedOut = () => {
 const mergeDbProfile = (baseUser: AppUser, dbUser: AppUser): AppUser => ({
     ...baseUser,
     ...dbUser,
-    role: dbUser.role,
+    // Bootstrap admin email keeps admin even if DB row is still 'user'.
+    role: baseUser.role === 'admin' || dbUser.role === 'admin' ? 'admin' : 'user',
     fullName: dbUser.fullName || baseUser.fullName,
     email: dbUser.email || baseUser.email,
     emailConfirmed: dbUser.emailConfirmed,
@@ -184,6 +187,13 @@ const hydrateAppUser = async (sessionUser: User): Promise<AppUser> => {
 
     if (!dbUser) {
         dbUser = await ensureUserProfile(baseUser);
+    }
+
+    if (baseUser.role === 'admin') {
+        const promoted = await ensureBootstrapAdminRole(baseUser);
+        if (promoted) {
+            dbUser = promoted;
+        }
     }
 
     if (!dbUser) {
@@ -388,15 +398,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, [user?.id]);
 
     const signIn = async (email: string, password: string) => {
+        const normalizedEmail = email.trim();
+        const normalizedPassword = password;
+
         if (isSupabaseConfigured && supabase) {
             signedOutRef.current = false;
             clearJustSignedOut();
             localStorage.removeItem(profileStorageKey);
 
-            const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email: normalizedEmail,
+                password: normalizedPassword,
+            });
 
             if (error) {
-                return { ok: false, message: error.message };
+                return { ok: false, message: mapAuthErrorMessage(error.message, error.code) };
             }
 
             if (data.user) {
@@ -406,10 +422,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return { ok: true, message: 'Giriş başarılı.' };
         }
 
-        const matched = users.find((candidate) => candidate.email.toLowerCase() === email.toLowerCase());
+        const matched = users.find((candidate) => candidate.email.toLowerCase() === normalizedEmail.toLowerCase());
 
         if (!matched) {
-            return { ok: false, message: 'Kullanıcı bulunamadı.' };
+            return { ok: false, message: 'E-posta veya şifre hatalı.' };
         }
 
         if (!matched.active) {
@@ -580,6 +596,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     };
 
+    const deleteAccount = async () => {
+        const activeUser = user;
+        if (!activeUser) {
+            return { ok: false, message: 'Kullanıcı bulunamadı.' };
+        }
+
+        try {
+            if (isSupabaseConfigured && supabase) {
+                const { data: files } = await supabase.storage.from(AVATAR_BUCKET).list(activeUser.id);
+                if (files?.length) {
+                    const paths = files.map((fileItem) => `${activeUser.id}/${fileItem.name}`);
+                    await supabase.storage.from(AVATAR_BUCKET).remove(paths);
+                }
+
+                const { error: rpcError } = await supabase.rpc('delete_own_account');
+
+                if (rpcError) {
+                    await supabase.from('tasks').delete().eq('user_id', activeUser.id);
+                    await supabase.from('activity_logs').delete().eq('actor_id', activeUser.id);
+                    await supabase.from('users').delete().eq('id', activeUser.id);
+
+                    clearTaskDataForUser(activeUser.id);
+                    await signOut();
+
+                    return {
+                        ok: false,
+                        message: `Hesap tamamen silinemedi: ${rpcError.message}. Supabase SQL Editor'da fix-delete-account.sql çalıştırıp tekrar dene.`,
+                    };
+                }
+            }
+
+            clearTaskDataForUser(activeUser.id);
+            await signOut();
+            return { ok: true, message: 'Hesabın ve tüm verilerin silindi.' };
+        } catch (caughtError) {
+            return {
+                ok: false,
+                message: caughtError instanceof Error ? caughtError.message : 'Hesap silinemedi.',
+            };
+        }
+    };
+
     const persistAdminChange = (userId: string, changes: Partial<AppUser>) => {
         if (isSupabaseConfigured) {
             void updateAdminUser(userId, changes);
@@ -711,6 +769,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signUp,
         requestPasswordReset,
         changePassword,
+        deleteAccount,
         signOut,
         updateRole,
         updateProfile,

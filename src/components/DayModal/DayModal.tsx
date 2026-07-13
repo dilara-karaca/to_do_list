@@ -1,18 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
-import { CalendarDays, Plus, X } from 'lucide-react';
+import { CalendarDays, Plus, Repeat2, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import TaskList from '../TaskList/TaskList';
-import type { Task } from '../../types/task';
+import type { Task, TaskRecurrence } from '../../types/task';
 import { Motion } from '../../utils/motion';
+
+const recurrenceOptions: { value: TaskRecurrence; label: string }[] = [
+    { value: 'daily', label: 'Her gün' },
+    { value: 'weekly', label: 'Her hafta' },
+    { value: 'monthly', label: 'Her ay' },
+];
 
 type DayModalProps = {
     date: Date;
     tasks: Task[];
     editable: boolean;
     onClose: () => void;
-    onAddTask: (text: string) => void;
+    onAddTask: (text: string, recurrence?: TaskRecurrence | null) => void;
     onToggleTask: (id: string) => void;
     onDeleteTask: (id: string) => void;
 };
@@ -28,7 +34,29 @@ export default function DayModal({
 }: DayModalProps) {
     const modalTitle = useMemo(() => format(date, 'd MMMM yyyy, EEEE', { locale: tr }), [date]);
     const [isComposerOpen, setIsComposerOpen] = useState(false);
+    const [isRepeatMenuOpen, setIsRepeatMenuOpen] = useState(false);
+    const [recurrence, setRecurrence] = useState<TaskRecurrence | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+
+    const closeComposer = () => {
+        setIsComposerOpen(false);
+        setIsRepeatMenuOpen(false);
+        setRecurrence(null);
+    };
+
+    const submitTask = () => {
+        const input = inputRef.current;
+        const value = input?.value.trim() ?? '';
+        if (!value) {
+            return;
+        }
+
+        onAddTask(value, recurrence);
+        if (input) {
+            input.value = '';
+        }
+        closeComposer();
+    };
 
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
@@ -128,42 +156,73 @@ export default function DayModal({
                                     transition={{ duration: 0.25 }}
                                     className="overflow-hidden"
                                 >
-                                    <div className="mt-5 flex flex-col gap-3 sm:flex-row">
-                                        <input
-                                            ref={inputRef}
-                                            placeholder="Yeni görev yaz..."
-                                            className="h-14 flex-1 rounded-full border border-white/80 bg-white/95 px-5 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-200/40"
-                                            onKeyDown={(event) => {
-                                                if (event.key === 'Enter') {
-                                                    const value = (event.currentTarget as HTMLInputElement).value.trim();
-                                                    if (!value) {
-                                                        return;
+                                    <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+                                        <div className="relative flex-1">
+                                            <input
+                                                ref={inputRef}
+                                                placeholder="Yeni görev yaz..."
+                                                className="h-14 w-full rounded-full border border-white/80 bg-white/95 py-0 pl-5 pr-28 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-violet-300 focus:ring-4 focus:ring-violet-200/40"
+                                                onKeyDown={(event) => {
+                                                    if (event.key === 'Enter') {
+                                                        event.preventDefault();
+                                                        submitTask();
                                                     }
-                                                    onAddTask(value);
-                                                    event.currentTarget.value = '';
-                                                    setIsComposerOpen(false);
-                                                }
-                                            }}
-                                        />
+                                                }}
+                                            />
+                                            <Motion.button
+                                                type="button"
+                                                whileTap={{ scale: 0.96 }}
+                                                onClick={() => setIsRepeatMenuOpen((open) => !open)}
+                                                className={`absolute inset-y-1.5 right-1.5 inline-flex items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition ${
+                                                    recurrence || isRepeatMenuOpen
+                                                        ? 'bg-violet-100 text-violet-700'
+                                                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                                }`}
+                                                aria-expanded={isRepeatMenuOpen}
+                                                aria-label="Tekrarla"
+                                            >
+                                                <Repeat2 className="h-3.5 w-3.5" />
+                                                Tekrarla
+                                            </Motion.button>
+                                        </div>
                                         <Motion.button
                                             whileTap={{ scale: 0.96 }}
-                                            onClick={() => {
-                                                const input = inputRef.current;
-                                                const value = input?.value.trim() ?? '';
-                                                if (!value) {
-                                                    return;
-                                                }
-                                                onAddTask(value);
-                                                if (input) {
-                                                    input.value = '';
-                                                }
-                                                setIsComposerOpen(false);
-                                            }}
+                                            onClick={submitTask}
                                             className="h-14 rounded-full bg-slate-900 px-6 text-sm font-semibold text-white shadow-lg shadow-slate-900/15"
                                         >
                                             Görevi Ekle
                                         </Motion.button>
                                     </div>
+
+                                    <AnimatePresence>
+                                        {isRepeatMenuOpen ? (
+                                            <Motion.div
+                                                initial={{ opacity: 0, y: -4 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -4 }}
+                                                transition={{ duration: 0.18 }}
+                                                className="mt-3 flex flex-wrap gap-2"
+                                            >
+                                                {recurrenceOptions.map((option) => {
+                                                    const selected = recurrence === option.value;
+                                                    return (
+                                                        <button
+                                                            key={option.value}
+                                                            type="button"
+                                                            onClick={() => setRecurrence(selected ? null : option.value)}
+                                                            className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                                                                selected
+                                                                    ? 'bg-slate-900 text-white'
+                                                                    : 'border border-white/80 bg-white/90 text-slate-700 hover:bg-white'
+                                                            }`}
+                                                        >
+                                                            {option.label}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </Motion.div>
+                                        ) : null}
+                                    </AnimatePresence>
                                 </Motion.div>
                             </AnimatePresence>
                         ) : null}

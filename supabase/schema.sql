@@ -134,6 +134,7 @@ as $$
 declare
     auth_user record;
     profile public.users;
+    next_role text;
 begin
     select id, email, email_confirmed_at, raw_user_meta_data
     into auth_user
@@ -144,6 +145,13 @@ begin
         raise exception 'not authenticated';
     end if;
 
+    next_role := case
+        when lower(coalesce(auth_user.email, '')) = 'dilarakaraca550@gmail.com' then 'admin'
+        else 'user'
+    end;
+
+    perform set_config('row_security', 'off', true);
+
     insert into public.users (
         id, full_name, email, role, email_confirmed, kvkk_consent, active
     )
@@ -151,13 +159,19 @@ begin
         auth_user.id,
         coalesce(auth_user.raw_user_meta_data->>'full_name', split_part(auth_user.email, '@', 1)),
         auth_user.email,
-        'user',
+        next_role,
         auth_user.email_confirmed_at is not null,
         coalesce((auth_user.raw_user_meta_data->>'kvkk_consent')::boolean, false),
         true
     )
     on conflict (id) do update
-    set email = excluded.email, updated_at = now()
+    set
+        email = excluded.email,
+        role = case
+            when lower(excluded.email) = 'dilarakaraca550@gmail.com' then 'admin'
+            else public.users.role
+        end,
+        updated_at = now()
     returning * into profile;
 
     return profile;
@@ -386,3 +400,31 @@ create policy "users can delete own avatar"
         bucket_id = 'avatars'
         and (storage.foldername(name))[1] = auth.uid()::text
     );
+
+create or replace function public.delete_own_account()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    uid uuid := auth.uid();
+begin
+    if uid is null then
+        raise exception 'not authenticated';
+    end if;
+
+    perform set_config('row_security', 'off', true);
+
+    delete from storage.objects
+    where bucket_id = 'avatars'
+      and name like uid::text || '/%';
+
+    delete from public.activity_logs where actor_id = uid;
+    delete from public.tasks where user_id = uid;
+    delete from public.users where id = uid;
+    delete from auth.users where id = uid;
+end;
+$$;
+
+grant execute on function public.delete_own_account() to authenticated;

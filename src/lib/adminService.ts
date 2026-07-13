@@ -1,10 +1,21 @@
 import type { AppUser } from '../types/auth';
 import type { ActivityLog, AdminStats, AdminUserSummary, DbTaskRow, DbUserRow } from '../types/admin';
 import type { TaskMap } from '../types/task';
-import { ensureUserProfile, fetchUserProfile, mapDbUser } from './profileService';
+import {
+    ensureBootstrapAdminRole,
+    isBootstrapAdminEmail,
+    mapDbUser,
+} from './profileService';
 import { isSupabaseConfigured, supabase } from './supabase';
 
-export { ensureUserProfile, fetchUserProfile, mapDbUser, BOOTSTRAP_ADMIN_EMAIL } from './profileService';
+export {
+    ensureUserProfile,
+    fetchUserProfile,
+    mapDbUser,
+    BOOTSTRAP_ADMIN_EMAIL,
+    ensureBootstrapAdminRole,
+    isBootstrapAdminEmail,
+} from './profileService';
 
 type AdminUserStatsRow = DbUserRow & {
     task_count?: number;
@@ -36,44 +47,132 @@ const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap =>
         return accumulator;
     }, {});
 
-async function loadUsersFromAdminRpc(): Promise<AdminUserSummary[] | null> {
+type AdminUsersFetchResult = {
+    users: AdminUserSummary[];
+    source: 'rpc_stats' | 'rpc_users' | 'table' | 'none';
+    message?: string;
+};
+
+async function loadUsersFromAdminRpc(): Promise<AdminUsersFetchResult> {
     if (!supabase) {
-        return null;
+        return { users: [], source: 'none', message: 'Supabase yapılandırılmamış.' };
     }
 
     const { data: rpcData, error: rpcError } = await supabase.rpc('get_admin_users_with_stats');
 
-    if (!rpcError && Array.isArray(rpcData) && rpcData.length) {
-        return (rpcData as AdminUserStatsRow[]).map(mapDbUserSummary);
+    if (!rpcError && Array.isArray(rpcData)) {
+        if (rpcData.length) {
+            return {
+                users: (rpcData as AdminUserStatsRow[]).map(mapDbUserSummary),
+                source: 'rpc_stats',
+            };
+        }
+
+        return {
+            users: [],
+            source: 'rpc_stats',
+            message: 'get_admin_users_with_stats boş döndü. public.users içinde role=admin olduğundan emin ol.',
+        };
     }
 
     const { data: usersData, error: usersError } = await supabase.rpc('get_admin_users');
 
-    if (usersError || !Array.isArray(usersData) || !usersData.length) {
-        return null;
+    if (!usersError && Array.isArray(usersData)) {
+        if (usersData.length) {
+            return {
+                users: (usersData as DbUserRow[]).map((row) => mapDbUserSummary({
+                    ...row,
+                    task_count: 0,
+                    completed_task_count: 0,
+                    last_task_date: null,
+                })),
+                source: 'rpc_users',
+            };
+        }
+
+        return {
+            users: [],
+            source: 'rpc_users',
+            message: 'get_admin_users boş döndü. Hesabın public.users.role değeri admin değil olabilir.',
+        };
     }
 
-    return (usersData as DbUserRow[]).map((row) => mapDbUserSummary({
-        ...row,
-        task_count: 0,
-        completed_task_count: 0,
-        last_task_date: null,
-    }));
+    const rpcMessage = rpcError?.message || usersError?.message;
+    return {
+        users: [],
+        source: 'none',
+        message: rpcMessage
+            ? `Admin RPC hatası: ${rpcMessage}`
+            : 'Admin RPC fonksiyonları bulunamadı. fix-admin.sql çalıştır.',
+    };
 }
 
 export async function fetchAdminUsers() {
-    return fetchAdminUsersWithStats();
+    const result = await fetchAdminUsersDetailed();
+    return result.users;
 }
 
 export async function fetchAdminUsersWithStats(): Promise<AdminUserSummary[]> {
+    const result = await fetchAdminUsersDetailed();
+    return result.users;
+}
+
+export async function fetchAdminUsersDetailed(): Promise<AdminUsersFetchResult> {
     if (!isSupabaseConfigured || !supabase) {
-        return [];
+        return { users: [], source: 'none', message: 'Supabase yapılandırılmamış.' };
     }
 
     try {
-        const fromRpc = await loadUsersFromAdminRpc();
-        if (fromRpc?.length) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const sessionUser = sessionData.session?.user;
+        const sessionEmail = sessionUser?.email ?? '';
+
+        if (sessionUser && isBootstrapAdminEmail(sessionEmail)) {
+            await ensureBootstrapAdminRole({
+                id: sessionUser.id,
+                fullName: String(sessionUser.user_metadata?.full_name ?? sessionEmail),
+                email: sessionEmail,
+                role: 'admin',
+                emailConfirmed: Boolean(sessionUser.email_confirmed_at),
+                kvkkConsent: Boolean(sessionUser.user_metadata?.kvkk_consent),
+                kvkkConsentAt: typeof sessionUser.user_metadata?.kvkk_consent_at === 'string'
+                    ? sessionUser.user_metadata.kvkk_consent_at
+                    : null,
+                createdAt: sessionUser.created_at,
+                updatedAt: sessionUser.updated_at ?? sessionUser.created_at,
+                lastSignInAt: sessionUser.last_sign_in_at ?? null,
+                active: true,
+                avatarUrl: null,
+            });
+        }
+
+        let fromRpc = await loadUsersFromAdminRpc();
+        if (fromRpc.users.length) {
             return fromRpc;
+        }
+
+        // Bootstrap admin: promote then retry once (DB role may have lagged).
+        if (sessionUser && isBootstrapAdminEmail(sessionEmail) && fromRpc.source !== 'none') {
+            await ensureBootstrapAdminRole({
+                id: sessionUser.id,
+                fullName: String(sessionUser.user_metadata?.full_name ?? sessionEmail),
+                email: sessionEmail,
+                role: 'admin',
+                emailConfirmed: Boolean(sessionUser.email_confirmed_at),
+                kvkkConsent: Boolean(sessionUser.user_metadata?.kvkk_consent),
+                kvkkConsentAt: typeof sessionUser.user_metadata?.kvkk_consent_at === 'string'
+                    ? sessionUser.user_metadata.kvkk_consent_at
+                    : null,
+                createdAt: sessionUser.created_at,
+                updatedAt: sessionUser.updated_at ?? sessionUser.created_at,
+                lastSignInAt: sessionUser.last_sign_in_at ?? null,
+                active: true,
+                avatarUrl: null,
+            });
+            fromRpc = await loadUsersFromAdminRpc();
+            if (fromRpc.users.length) {
+                return fromRpc;
+            }
         }
 
         const { data, error } = await supabase
@@ -81,18 +180,33 @@ export async function fetchAdminUsersWithStats(): Promise<AdminUserSummary[]> {
             .select('*')
             .order('created_at', { ascending: false });
 
-        if (error || !data) {
-            return [];
+        if (!error && Array.isArray(data) && data.length) {
+            return {
+                users: (data as DbUserRow[]).map((row) => mapDbUserSummary({
+                    ...row,
+                    task_count: 0,
+                    completed_task_count: 0,
+                    last_task_date: null,
+                })),
+                source: 'table',
+            };
         }
 
-        return (data as DbUserRow[]).map((row) => mapDbUserSummary({
-            ...row,
-            task_count: 0,
-            completed_task_count: 0,
-            last_task_date: null,
-        }));
-    } catch {
-        return [];
+        return {
+            users: [],
+            source: fromRpc.source === 'none' ? 'none' : fromRpc.source,
+            message: error?.message
+                || fromRpc.message
+                || 'Kullanıcı listesi boş. Supabase SQL Editor\'da fix-admin-now.sql dosyasını çalıştır.',
+        };
+    } catch (caughtError) {
+        const message = caughtError instanceof TypeError && /failed to fetch/i.test(caughtError.message)
+            ? 'Supabase bağlantısı kurulamadı (Failed to fetch). URL/anon key ve ağ bağlantısını kontrol et.'
+            : caughtError instanceof Error
+                ? caughtError.message
+                : 'Kullanıcılar yüklenemedi.';
+
+        return { users: [], source: 'none', message };
     }
 }
 

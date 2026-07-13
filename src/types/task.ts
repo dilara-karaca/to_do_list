@@ -8,3 +8,5 @@ export type Task = {
 };
 
 export type TaskMap = Record<string, Task[]>;
+
+export type TaskRecurrence = 'daily' | 'weekly' | 'monthly';

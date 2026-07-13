@@ -15,9 +15,8 @@ import {
     syncTaskMapForUser,
     upsertSingleTask,
 } from '../lib/taskService';
-import type { Task } from '../types/task';
-import type { TaskMap } from '../types/task';
-import { dateKey, isPastDate } from '../utils/date';
+import type { Task, TaskMap, TaskRecurrence } from '../types/task';
+import { dateKey, getRecurrenceDates, isPastDate } from '../utils/date';
 import { Motion } from '../utils/motion';
 import {
     loadLegacyTaskMap,
@@ -189,7 +188,10 @@ export function PlannerPage() {
         setTaskMap((previous) => ({ ...previous, [activeDateKey]: nextTasks }));
     };
 
-    const syncTaskImmediately = async (nextTasks: Task[], removedTaskId?: string) => {
+    const syncTaskImmediately = async (
+        entries: Array<{ date: string; task: Task }>,
+        removedTaskId?: string,
+    ) => {
         if (!user?.id || !isSupabaseConfigured || !remoteReady) {
             return;
         }
@@ -205,10 +207,10 @@ export function PlannerPage() {
             return;
         }
 
-        for (const task of nextTasks) {
-            const result = await upsertSingleTask(user.id, activeDateKey, task, user);
+        for (const entry of entries) {
+            const result = await upsertSingleTask(user.id, entry.date, entry.task, user);
             if (result.ok) {
-                previousTaskIdsRef.current.add(task.id);
+                previousTaskIdsRef.current.add(entry.task.id);
                 setSyncError('');
             } else if (result.message) {
                 setSyncError(result.message);
@@ -223,10 +225,13 @@ export function PlannerPage() {
 
         const nextTasks = activeTasks.map((task) => (task.id === taskId ? { ...task, completed: !task.completed } : task));
         updateTasks(nextTasks);
-        void syncTaskImmediately(nextTasks.filter((task) => task.id === taskId));
+        const changed = nextTasks.find((task) => task.id === taskId);
+        if (changed) {
+            void syncTaskImmediately([{ date: activeDateKey, task: changed }]);
+        }
     };
 
-    const handleAddTask = (text: string) => {
+    const handleAddTask = (text: string, recurrence?: TaskRecurrence | null) => {
         if (!canEditSelectedDate) {
             return;
         }
@@ -236,15 +241,34 @@ export function PlannerPage() {
             return;
         }
 
-        const newTask: Task = {
-            id: crypto.randomUUID(),
-            text: trimmedText,
-            completed: false,
-            createdAt: new Date().toISOString(),
-        };
-        const nextTasks = [newTask, ...activeTasks];
-        updateTasks(nextTasks);
-        void syncTaskImmediately([newTask]);
+        const targetDates = recurrence
+            ? getRecurrenceDates(selectedDate, recurrence)
+            : [selectedDate];
+
+        if (!targetDates.length) {
+            return;
+        }
+
+        const createdAt = new Date().toISOString();
+        const entries = targetDates.map((targetDate) => ({
+            date: dateKey(targetDate),
+            task: {
+                id: crypto.randomUUID(),
+                text: trimmedText,
+                completed: false,
+                createdAt,
+            } satisfies Task,
+        }));
+
+        setTaskMap((previous) => {
+            const next = { ...previous };
+            for (const entry of entries) {
+                next[entry.date] = [entry.task, ...(next[entry.date] ?? [])];
+            }
+            return next;
+        });
+
+        void syncTaskImmediately(entries);
     };
 
     const handleDeleteTask = (taskId: string) => {
