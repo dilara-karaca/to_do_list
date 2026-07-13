@@ -5,7 +5,10 @@ export type Task = {
     createdAt: string;
     description?: string;
     userId?: string;
+    seriesId?: string;
 };
+
+export type TaskDeleteScope = 'single' | 'series';
 
 export type TaskMap = Record<string, Task[]>;
 

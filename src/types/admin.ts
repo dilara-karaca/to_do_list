@@ -59,4 +59,5 @@ export type DbTaskRow = {
     completed: boolean;
     created_at: string;
     updated_at: string;
+    series_id?: string | null;
 };

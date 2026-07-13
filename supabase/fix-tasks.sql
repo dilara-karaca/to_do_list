@@ -81,7 +81,8 @@ create or replace function public.upsert_own_task(
     p_description text,
     p_date date,
     p_completed boolean,
-    p_created_at timestamptz default now()
+    p_created_at timestamptz default now(),
+    p_series_id uuid default null
 )
 returns uuid
 language plpgsql
@@ -98,7 +99,8 @@ begin
         description,
         date,
         completed,
-        created_at
+        created_at,
+        series_id
     )
     values (
         p_id,
@@ -107,7 +109,8 @@ begin
         p_description,
         p_date,
         p_completed,
-        coalesce(p_created_at, now())
+        coalesce(p_created_at, now()),
+        p_series_id
     )
     on conflict (id) do update
     set
@@ -115,13 +118,14 @@ begin
         description = excluded.description,
         date = excluded.date,
         completed = excluded.completed,
+        series_id = excluded.series_id,
         updated_at = now();
 
     return p_id;
 end;
 $$;
 
-grant execute on function public.upsert_own_task(uuid, text, text, date, boolean, timestamptz) to authenticated;
+grant execute on function public.upsert_own_task(uuid, text, text, date, boolean, timestamptz, uuid) to authenticated;
 
 create or replace function public.delete_own_task(p_id uuid)
 returns void
@@ -138,6 +142,25 @@ $$;
 
 grant execute on function public.delete_own_task(uuid) to authenticated;
 
+create or replace function public.delete_own_task_series(p_series_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+    if p_series_id is null then
+        return;
+    end if;
+
+    delete from public.tasks
+    where series_id = p_series_id
+      and user_id = auth.uid();
+end;
+$$;
+
+grant execute on function public.delete_own_task_series(uuid) to authenticated;
+
 -- Tablolar yoksa oluştur
 create table if not exists public.tasks (
     id uuid primary key default gen_random_uuid(),
@@ -146,9 +169,12 @@ create table if not exists public.tasks (
     description text,
     date date not null,
     completed boolean not null default false,
+    series_id uuid,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
+
+alter table public.tasks add column if not exists series_id uuid;
 
 alter table public.tasks enable row level security;
 

@@ -14,6 +14,7 @@ const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap => {
             completed: row.completed,
             createdAt: row.created_at,
             userId: row.user_id,
+            seriesId: row.series_id ?? undefined,
         });
         accumulator[row.date] = list;
         return accumulator;
@@ -195,6 +196,7 @@ export async function upsertSingleTask(
             date,
             completed: task.completed,
             created_at: task.createdAt,
+            series_id: task.seriesId ?? null,
         };
 
         const { error: rpcError } = await supabase.rpc('upsert_own_task', {
@@ -204,6 +206,7 @@ export async function upsertSingleTask(
             p_date: date,
             p_completed: task.completed,
             p_created_at: task.createdAt,
+            p_series_id: task.seriesId ?? null,
         });
 
         if (!rpcError) {
@@ -263,6 +266,57 @@ export async function deleteSingleTask(
     } catch (error) {
         return { ok: false, message: formatTaskError(error) };
     }
+}
+
+export async function deleteTaskSeries(
+    userId: string,
+    seriesId: string,
+    taskIds: string[],
+    user?: AppUser | null,
+): Promise<{ ok: boolean; message?: string }> {
+    if (!isSupabaseConfigured || !supabase) {
+        return { ok: false, message: 'Supabase yapılandırılmamış.' };
+    }
+
+    try {
+        if (user) {
+            await ensureTaskStorageReady(user);
+        }
+
+        const { error: rpcError } = await supabase.rpc('delete_own_task_series', {
+            p_series_id: seriesId,
+        });
+
+        if (!rpcError) {
+            return { ok: true };
+        }
+
+        for (const taskId of taskIds) {
+            const deleted = await deleteSingleTask(userId, taskId, user);
+            if (!deleted.ok) {
+                return deleted;
+            }
+        }
+
+        return { ok: true };
+    } catch (error) {
+        return { ok: false, message: formatTaskError(error) };
+    }
+}
+
+export async function deleteMultipleTasks(
+    userId: string,
+    taskIds: string[],
+    user?: AppUser | null,
+): Promise<{ ok: boolean; message?: string }> {
+    for (const taskId of taskIds) {
+        const deleted = await deleteSingleTask(userId, taskId, user);
+        if (!deleted.ok) {
+            return deleted;
+        }
+    }
+
+    return { ok: true };
 }
 
 export function collectTaskIds(taskMap: TaskMap) {

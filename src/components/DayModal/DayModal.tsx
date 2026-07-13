@@ -4,7 +4,7 @@ import { CalendarDays, Plus, Repeat2, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import TaskList from '../TaskList/TaskList';
-import type { Task, TaskRecurrence } from '../../types/task';
+import type { Task, TaskDeleteScope, TaskRecurrence } from '../../types/task';
 import { Motion } from '../../utils/motion';
 
 const recurrenceOptions: { value: TaskRecurrence; label: string }[] = [
@@ -20,7 +20,8 @@ type DayModalProps = {
     onClose: () => void;
     onAddTask: (text: string, recurrence?: TaskRecurrence | null) => void;
     onToggleTask: (id: string) => void;
-    onDeleteTask: (id: string) => void;
+    onDeleteTask: (id: string, scope?: TaskDeleteScope) => void;
+    isSeriesTask: (id: string) => boolean;
 };
 
 export default function DayModal({
@@ -31,12 +32,19 @@ export default function DayModal({
     onAddTask,
     onToggleTask,
     onDeleteTask,
+    isSeriesTask,
 }: DayModalProps) {
     const modalTitle = useMemo(() => format(date, 'd MMMM yyyy, EEEE', { locale: tr }), [date]);
     const [isComposerOpen, setIsComposerOpen] = useState(false);
     const [isRepeatMenuOpen, setIsRepeatMenuOpen] = useState(false);
     const [recurrence, setRecurrence] = useState<TaskRecurrence | null>(null);
+    const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+
+    const pendingDeleteTask = useMemo(
+        () => (pendingDeleteId ? tasks.find((task) => task.id === pendingDeleteId) ?? null : null),
+        [pendingDeleteId, tasks],
+    );
 
     const closeComposer = () => {
         setIsComposerOpen(false);
@@ -58,16 +66,38 @@ export default function DayModal({
         closeComposer();
     };
 
+    const handleDeleteRequest = (taskId: string) => {
+        if (isSeriesTask(taskId)) {
+            setPendingDeleteId(taskId);
+            return;
+        }
+
+        onDeleteTask(taskId, 'single');
+    };
+
+    const confirmDelete = (scope: TaskDeleteScope) => {
+        if (!pendingDeleteId) {
+            return;
+        }
+
+        onDeleteTask(pendingDeleteId, scope);
+        setPendingDeleteId(null);
+    };
+
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.key === 'Escape') {
+                if (pendingDeleteId) {
+                    setPendingDeleteId(null);
+                    return;
+                }
                 onClose();
             }
         };
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [onClose]);
+    }, [onClose, pendingDeleteId]);
 
     useEffect(() => {
         if (isComposerOpen) {
@@ -225,9 +255,71 @@ export default function DayModal({
                             </AnimatePresence>
                         ) : null}
 
-                        <TaskList tasks={tasks} editable={editable} onToggle={onToggleTask} onDelete={onDeleteTask} />
+                        <TaskList tasks={tasks} editable={editable} onToggle={onToggleTask} onDelete={handleDeleteRequest} />
                     </div>
                 </div>
+
+                <AnimatePresence>
+                    {pendingDeleteTask ? (
+                        <Motion.div
+                            className="absolute inset-0 z-20 flex items-end justify-center bg-slate-900/25 p-4 sm:items-center"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setPendingDeleteId(null)}
+                        >
+                            <Motion.div
+                                role="dialog"
+                                aria-modal="true"
+                                aria-label="Tekrarlayan görevi sil"
+                                initial={{ opacity: 0, y: 18, scale: 0.96 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 12, scale: 0.97 }}
+                                transition={{ type: 'spring', stiffness: 360, damping: 28 }}
+                                className="w-full max-w-md rounded-[28px] border border-white/80 bg-white/95 p-5 shadow-xl shadow-slate-900/10"
+                                onClick={(event) => event.stopPropagation()}
+                            >
+                                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-rose-400">
+                                    Tekrarlayan görev
+                                </p>
+                                <h4 className="mt-3 text-xl font-semibold tracking-tight text-slate-900">
+                                    Nasıl silmek istersin?
+                                </h4>
+                                <p className="mt-2 text-sm leading-relaxed text-slate-500">
+                                    “{pendingDeleteTask.text}” birden fazla güne atanmış. Sadece bugünkü örneği
+                                    veya atanan tümünü silebilirsin.
+                                </p>
+
+                                <div className="mt-5 flex flex-col gap-2.5">
+                                    <Motion.button
+                                        type="button"
+                                        whileTap={{ scale: 0.98 }}
+                                        onClick={() => confirmDelete('single')}
+                                        className="h-12 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:bg-slate-50"
+                                    >
+                                        Sadece bu görevi sil
+                                    </Motion.button>
+                                    <Motion.button
+                                        type="button"
+                                        whileTap={{ scale: 0.98 }}
+                                        onClick={() => confirmDelete('series')}
+                                        className="h-12 rounded-full bg-rose-500 px-4 text-sm font-semibold text-white shadow-lg shadow-rose-500/20 transition hover:bg-rose-600"
+                                    >
+                                        Atanan tümünü sil
+                                    </Motion.button>
+                                    <Motion.button
+                                        type="button"
+                                        whileTap={{ scale: 0.98 }}
+                                        onClick={() => setPendingDeleteId(null)}
+                                        className="h-11 rounded-full px-4 text-sm font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                                    >
+                                        Vazgeç
+                                    </Motion.button>
+                                </div>
+                            </Motion.div>
+                        </Motion.div>
+                    ) : null}
+                </AnimatePresence>
             </Motion.section>
         </Motion.div>
     );

@@ -10,12 +10,14 @@ import { defaultSelectedDate } from '../data/defaultDate';
 import { isSupabaseConfigured } from '../lib/supabase';
 import {
     collectTaskIds,
+    deleteMultipleTasks,
     deleteSingleTask,
+    deleteTaskSeries,
     fetchOwnTasks,
     syncTaskMapForUser,
     upsertSingleTask,
 } from '../lib/taskService';
-import type { Task, TaskMap, TaskRecurrence } from '../types/task';
+import type { Task, TaskDeleteScope, TaskMap, TaskRecurrence } from '../types/task';
 import { dateKey, getRecurrenceDates, isPastDate } from '../utils/date';
 import { Motion } from '../utils/motion';
 import {
@@ -25,6 +27,12 @@ import {
     saveSelectedDate,
     saveTaskMapForUser,
 } from '../utils/storage';
+import {
+    collectSeriesTaskIds,
+    findTaskInMap,
+    isSeriesTask,
+    removeTasksFromMap,
+} from '../utils/taskSeries';
 
 export function PlannerPage() {
     const { user } = useAuth();
@@ -190,16 +198,24 @@ export function PlannerPage() {
 
     const syncTaskImmediately = async (
         entries: Array<{ date: string; task: Task }>,
-        removedTaskId?: string,
+        removedTaskIds?: string[],
+        seriesId?: string,
     ) => {
         if (!user?.id || !isSupabaseConfigured || !remoteReady) {
             return;
         }
 
-        if (removedTaskId) {
-            const result = await deleteSingleTask(user.id, removedTaskId, user);
+        if (removedTaskIds?.length) {
+            const result = seriesId
+                ? await deleteTaskSeries(user.id, seriesId, removedTaskIds, user)
+                : removedTaskIds.length === 1
+                    ? await deleteSingleTask(user.id, removedTaskIds[0], user)
+                    : await deleteMultipleTasks(user.id, removedTaskIds, user);
+
             if (result.ok) {
-                previousTaskIdsRef.current.delete(removedTaskId);
+                for (const taskId of removedTaskIds) {
+                    previousTaskIdsRef.current.delete(taskId);
+                }
                 setSyncError('');
             } else if (result.message) {
                 setSyncError(result.message);
@@ -250,6 +266,7 @@ export function PlannerPage() {
         }
 
         const createdAt = new Date().toISOString();
+        const seriesId = recurrence ? crypto.randomUUID() : undefined;
         const entries = targetDates.map((targetDate) => ({
             date: dateKey(targetDate),
             task: {
@@ -257,6 +274,7 @@ export function PlannerPage() {
                 text: trimmedText,
                 completed: false,
                 createdAt,
+                ...(seriesId ? { seriesId } : {}),
             } satisfies Task,
         }));
 
@@ -271,13 +289,31 @@ export function PlannerPage() {
         void syncTaskImmediately(entries);
     };
 
-    const handleDeleteTask = (taskId: string) => {
+    const handleDeleteTask = (taskId: string, scope: TaskDeleteScope = 'single') => {
         if (!canEditSelectedDate) {
             return;
         }
 
-        updateTasks(activeTasks.filter((task) => task.id !== taskId));
-        void syncTaskImmediately([], taskId);
+        const task = findTaskInMap(taskMap, taskId);
+        if (!task) {
+            return;
+        }
+
+        if (scope === 'series') {
+            const seriesIds = collectSeriesTaskIds(taskMap, task);
+            const removedIds = new Set(seriesIds);
+            setTaskMap((previous) => removeTasksFromMap(previous, removedIds));
+            void syncTaskImmediately([], seriesIds, task.seriesId);
+            return;
+        }
+
+        updateTasks(activeTasks.filter((item) => item.id !== taskId));
+        void syncTaskImmediately([], [taskId]);
+    };
+
+    const isSeriesTaskForId = (taskId: string) => {
+        const task = findTaskInMap(taskMap, taskId);
+        return task ? isSeriesTask(taskMap, task) : false;
     };
 
     if (tasksLoading) {
@@ -305,7 +341,7 @@ export function PlannerPage() {
             </Motion.main>
 
             <AnimatePresence>
-                {isModalOpen ? <DayModal key={activeDateKey} date={selectedDate} tasks={activeTasks} editable={canEditSelectedDate} onClose={() => setIsModalOpen(false)} onAddTask={handleAddTask} onDeleteTask={handleDeleteTask} onToggleTask={handleToggleTask} /> : null}
+                {isModalOpen ? <DayModal key={activeDateKey} date={selectedDate} tasks={activeTasks} editable={canEditSelectedDate} onClose={() => setIsModalOpen(false)} onAddTask={handleAddTask} onDeleteTask={handleDeleteTask} onToggleTask={handleToggleTask} isSeriesTask={isSeriesTaskForId} /> : null}
             </AnimatePresence>
         </div>
     );

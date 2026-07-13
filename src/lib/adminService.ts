@@ -42,6 +42,7 @@ const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap =>
             completed: row.completed,
             createdAt: row.created_at,
             userId: row.user_id,
+            seriesId: row.series_id ?? undefined,
         });
         accumulator[row.date] = list;
         return accumulator;
