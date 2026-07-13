@@ -45,6 +45,7 @@ export default function DayModal({
         () => (pendingDeleteId ? tasks.find((task) => task.id === pendingDeleteId) ?? null : null),
         [pendingDeleteId, tasks],
     );
+    const pendingIsSeries = pendingDeleteId ? isSeriesTask(pendingDeleteId) : false;
 
     const closeComposer = () => {
         setIsComposerOpen(false);
@@ -67,12 +68,8 @@ export default function DayModal({
     };
 
     const handleDeleteRequest = (taskId: string) => {
-        if (isSeriesTask(taskId)) {
-            setPendingDeleteId(taskId);
-            return;
-        }
-
-        onDeleteTask(taskId, 'single');
+        // Her silmede seçenek göster; tekrarlayanlarda "tümünü sil" de çıkar.
+        setPendingDeleteId(taskId);
     };
 
     const confirmDelete = (scope: TaskDeleteScope) => {
@@ -280,14 +277,15 @@ export default function DayModal({
                                 onClick={(event) => event.stopPropagation()}
                             >
                                 <p className="text-xs font-semibold uppercase tracking-[0.24em] text-rose-400">
-                                    Tekrarlayan görev
+                                    {pendingIsSeries ? 'Tekrarlayan görev' : 'Görevi sil'}
                                 </p>
                                 <h4 className="mt-3 text-xl font-semibold tracking-tight text-slate-900">
                                     Nasıl silmek istersin?
                                 </h4>
                                 <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                                    “{pendingDeleteTask.text}” birden fazla güne atanmış. Sadece bugünkü örneği
-                                    veya atanan tümünü silebilirsin.
+                                    {pendingIsSeries
+                                        ? `“${pendingDeleteTask.text}” birden fazla güne atanmış görünüyor. Sadece bugünkü örneği veya atanan tümünü silebilirsin.`
+                                        : `“${pendingDeleteTask.text}” görevini silmek istediğine emin misin?`}
                                 </p>
 
                                 <div className="mt-5 flex flex-col gap-2.5">
@@ -295,18 +293,24 @@ export default function DayModal({
                                         type="button"
                                         whileTap={{ scale: 0.98 }}
                                         onClick={() => confirmDelete('single')}
-                                        className="h-12 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:bg-slate-50"
+                                        className={`h-12 rounded-full px-4 text-sm font-semibold transition ${
+                                            pendingIsSeries
+                                                ? 'border border-slate-200 bg-white text-slate-800 hover:bg-slate-50'
+                                                : 'bg-rose-500 text-white shadow-lg shadow-rose-500/20 hover:bg-rose-600'
+                                        }`}
                                     >
                                         Sadece bu görevi sil
                                     </Motion.button>
-                                    <Motion.button
-                                        type="button"
-                                        whileTap={{ scale: 0.98 }}
-                                        onClick={() => confirmDelete('series')}
-                                        className="h-12 rounded-full bg-rose-500 px-4 text-sm font-semibold text-white shadow-lg shadow-rose-500/20 transition hover:bg-rose-600"
-                                    >
-                                        Atanan tümünü sil
-                                    </Motion.button>
+                                    {pendingIsSeries ? (
+                                        <Motion.button
+                                            type="button"
+                                            whileTap={{ scale: 0.98 }}
+                                            onClick={() => confirmDelete('series')}
+                                            className="h-12 rounded-full bg-rose-500 px-4 text-sm font-semibold text-white shadow-lg shadow-rose-500/20 transition hover:bg-rose-600"
+                                        >
+                                            Atanan tümünü sil
+                                        </Motion.button>
+                                    ) : null}
                                     <Motion.button
                                         type="button"
                                         whileTap={{ scale: 0.98 }}

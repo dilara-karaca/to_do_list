@@ -11,19 +11,52 @@ export function findTaskInMap(taskMap: TaskMap, taskId: string): Task | undefine
     return undefined;
 }
 
+const createdAtMs = (value: string) => {
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) ? time : Number.NaN;
+};
+
 export function collectSeriesTaskIds(taskMap: TaskMap, task: Task): string[] {
     const allTasks = Object.values(taskMap).flat();
 
     if (task.seriesId) {
-        return allTasks.filter((candidate) => candidate.seriesId === task.seriesId).map((candidate) => candidate.id);
+        const bySeries = allTasks
+            .filter((candidate) => candidate.seriesId === task.seriesId)
+            .map((candidate) => candidate.id);
+        if (bySeries.length) {
+            return bySeries;
+        }
     }
 
+    const taskCreatedAt = createdAtMs(task.createdAt);
+    const byCreatedAt = allTasks
+        .filter((candidate) => {
+            if (candidate.text !== task.text) {
+                return false;
+            }
+
+            const candidateCreatedAt = createdAtMs(candidate.createdAt);
+            return Number.isFinite(taskCreatedAt)
+                && Number.isFinite(candidateCreatedAt)
+                && candidateCreatedAt === taskCreatedAt;
+        })
+        .map((candidate) => candidate.id);
+
+    if (byCreatedAt.length > 1) {
+        return byCreatedAt;
+    }
+
+    // Eski tekrarlayan görevlerde created_at birebir tutmayabilir; aynı metni sil seçeneği için kullan.
     return allTasks
-        .filter((candidate) => candidate.text === task.text && candidate.createdAt === task.createdAt)
+        .filter((candidate) => candidate.text === task.text)
         .map((candidate) => candidate.id);
 }
 
 export function isSeriesTask(taskMap: TaskMap, task: Task): boolean {
+    if (task.seriesId) {
+        return true;
+    }
+
     return collectSeriesTaskIds(taskMap, task).length > 1;
 }
 
