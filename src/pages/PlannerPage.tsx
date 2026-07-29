@@ -292,7 +292,7 @@ export function PlannerPage() {
         setTaskMap((previous) => {
             const next = { ...previous };
             for (const entry of entries) {
-                next[entry.date] = [entry.task, ...(next[entry.date] ?? [])];
+                next[entry.date] = [...(next[entry.date] ?? []), entry.task];
             }
             return next;
         });

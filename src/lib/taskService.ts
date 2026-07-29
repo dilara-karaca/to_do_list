@@ -23,7 +23,7 @@ const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap => {
 
     for (const date of Object.keys(taskMap)) {
         taskMap[date] = [...taskMap[date]].sort(
-            (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+            (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
         );
     }
 
