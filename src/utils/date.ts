@@ -48,22 +48,16 @@ export const clampMonth = (date: Date, delta: number) => addMonths(date, delta);
 
 export const toDate = (value: string) => parseISO(value);
 
-const recurrenceCounts: Record<TaskRecurrence, number> = {
-    daily: 30,
-    weekly: 12,
-    monthly: 12,
-};
-
 /** Start date included. Past days are skipped. */
 export const getRecurrenceDates = (startDate: Date, recurrence: TaskRecurrence): Date[] => {
-    const count = recurrenceCounts[recurrence];
+    const { frequency, count } = recurrence;
     const dates: Date[] = [];
 
     for (let index = 0; index < count; index += 1) {
         const nextDate =
-            recurrence === 'daily'
+            frequency === 'daily'
                 ? addDays(startDate, index)
-                : recurrence === 'weekly'
+                : frequency === 'weekly'
                     ? addWeeks(startDate, index)
                     : addMonths(startDate, index);
 

@@ -13,4 +13,9 @@ export type TaskDeleteScope = 'single' | 'series';
 
 export type TaskMap = Record<string, Task[]>;
 
-export type TaskRecurrence = 'daily' | 'weekly' | 'monthly';
+export type RecurrenceFrequency = 'daily' | 'weekly' | 'monthly';
+
+export type TaskRecurrence = {
+    frequency: RecurrenceFrequency;
+    count: number;
+};

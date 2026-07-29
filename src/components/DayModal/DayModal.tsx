@@ -4,14 +4,47 @@ import { CalendarDays, Plus, Repeat2, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import TaskList from '../TaskList/TaskList';
-import type { Task, TaskDeleteScope, TaskRecurrence } from '../../types/task';
+import type { RecurrenceFrequency, Task, TaskDeleteScope, TaskRecurrence } from '../../types/task';
 import { Motion } from '../../utils/motion';
 
-const recurrenceOptions: { value: TaskRecurrence; label: string }[] = [
+const frequencyOptions: { value: RecurrenceFrequency; label: string }[] = [
     { value: 'daily', label: 'Her gün' },
     { value: 'weekly', label: 'Her hafta' },
     { value: 'monthly', label: 'Her ay' },
 ];
+
+const durationPresets: Record<RecurrenceFrequency, { count: number; label: string }[]> = {
+    daily: [
+        { count: 7, label: '7 gün' },
+        { count: 14, label: '14 gün' },
+        { count: 30, label: '30 gün' },
+    ],
+    weekly: [
+        { count: 4, label: '4 hafta' },
+        { count: 8, label: '8 hafta' },
+        { count: 12, label: '12 hafta' },
+    ],
+    monthly: [
+        { count: 3, label: '3 ay' },
+        { count: 6, label: '6 ay' },
+        { count: 12, label: '12 ay' },
+    ],
+};
+
+const defaultCountFor = (frequency: RecurrenceFrequency) => durationPresets[frequency][0].count;
+
+const recurrenceHint = (recurrence: TaskRecurrence) => {
+    const frequencyLabel = frequencyOptions.find((option) => option.value === recurrence.frequency)?.label.toLowerCase();
+    const durationLabel = durationPresets[recurrence.frequency].find(
+        (preset) => preset.count === recurrence.count,
+    )?.label;
+
+    if (!frequencyLabel || !durationLabel) {
+        return null;
+    }
+
+    return `Bu görev ${durationLabel} boyunca ${frequencyLabel} eklenecek`;
+};
 
 type DayModalProps = {
     date: Date;
@@ -44,6 +77,23 @@ export default function DayModal({
         setIsComposerOpen(false);
         setIsRepeatMenuOpen(false);
         setRecurrence(null);
+    };
+
+    const selectFrequency = (frequency: RecurrenceFrequency) => {
+        setRecurrence((current) => {
+            if (current?.frequency === frequency) {
+                return null;
+            }
+
+            return {
+                frequency,
+                count: defaultCountFor(frequency),
+            };
+        });
+    };
+
+    const selectDuration = (count: number) => {
+        setRecurrence((current) => (current ? { ...current, count } : current));
     };
 
     const submitTask = () => {
@@ -201,25 +251,54 @@ export default function DayModal({
                                                 animate={{ opacity: 1, y: 0 }}
                                                 exit={{ opacity: 0, y: -4 }}
                                                 transition={{ duration: 0.18 }}
-                                                className="mt-3 flex flex-wrap gap-2"
+                                                className="mt-3 space-y-2"
                                             >
-                                                {recurrenceOptions.map((option) => {
-                                                    const selected = recurrence === option.value;
-                                                    return (
-                                                        <button
-                                                            key={option.value}
-                                                            type="button"
-                                                            onClick={() => setRecurrence(selected ? null : option.value)}
-                                                            className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                                                                selected
-                                                                    ? 'bg-slate-900 text-white'
-                                                                    : 'border border-white/80 bg-white/90 text-slate-700 hover:bg-white'
-                                                            }`}
-                                                        >
-                                                            {option.label}
-                                                        </button>
-                                                    );
-                                                })}
+                                                <div className="flex flex-wrap gap-2">
+                                                    {frequencyOptions.map((option) => {
+                                                        const selected = recurrence?.frequency === option.value;
+                                                        return (
+                                                            <button
+                                                                key={option.value}
+                                                                type="button"
+                                                                onClick={() => selectFrequency(option.value)}
+                                                                className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                                                                    selected
+                                                                        ? 'bg-slate-900 text-white'
+                                                                        : 'border border-white/80 bg-white/90 text-slate-700 hover:bg-white'
+                                                                }`}
+                                                            >
+                                                                {option.label}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+
+                                                {recurrence ? (
+                                                    <>
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {durationPresets[recurrence.frequency].map((preset) => {
+                                                                const selected = recurrence.count === preset.count;
+                                                                return (
+                                                                    <button
+                                                                        key={preset.count}
+                                                                        type="button"
+                                                                        onClick={() => selectDuration(preset.count)}
+                                                                        className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                                                                            selected
+                                                                                ? 'bg-violet-600 text-white'
+                                                                                : 'border border-violet-200/80 bg-violet-50/80 text-violet-700 hover:bg-violet-100'
+                                                                        }`}
+                                                                    >
+                                                                        {preset.label}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                        <p className="text-xs text-slate-500">
+                                                            {recurrenceHint(recurrence)}
+                                                        </p>
+                                                    </>
+                                                ) : null}
                                             </Motion.div>
                                         ) : null}
                                     </AnimatePresence>
