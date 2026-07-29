@@ -273,38 +273,14 @@ export async function deleteSingleTask(
 
 export async function deleteTaskSeries(
     userId: string,
-    seriesId: string,
+    _seriesId: string,
     taskIds: string[],
     user?: AppUser | null,
 ): Promise<{ ok: boolean; message?: string }> {
-    if (!isSupabaseConfigured || !supabase) {
-        return { ok: false, message: 'Supabase yapılandırılmamış.' };
-    }
-
-    try {
-        if (user) {
-            await ensureTaskStorageReady(user);
-        }
-
-        const { error: rpcError } = await supabase.rpc('delete_own_task_series', {
-            p_series_id: seriesId,
-        });
-
-        if (!rpcError) {
-            return { ok: true };
-        }
-
-        for (const taskId of taskIds) {
-            const deleted = await deleteSingleTask(userId, taskId, user);
-            if (!deleted.ok) {
-                return deleted;
-            }
-        }
-
-        return { ok: true };
-    } catch (error) {
-        return { ok: false, message: formatTaskError(error) };
-    }
+    // Seri silmede yalnızca verilen id'ler (bugün + gelecek) silinir; geçmiş kopyalar kalır.
+    // Blanket series RPC kullanılmaz — aksi halde geçmiş tamamlananlar da silinirdi.
+    void _seriesId;
+    return deleteMultipleTasks(userId, taskIds, user);
 }
 
 export async function deleteMultipleTasks(

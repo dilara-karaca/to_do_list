@@ -16,21 +16,46 @@ const createdAtMs = (value: string) => {
     return Number.isFinite(time) ? time : Number.NaN;
 };
 
-export function collectSeriesTaskIds(taskMap: TaskMap, task: Task): string[] {
-    const allTasks = Object.values(taskMap).flat();
+type CollectSeriesOptions = {
+    /** Inclusive yyyy-MM-dd lower bound. Past dates are excluded when set. */
+    fromDateKey?: string;
+};
+
+function iterateTaskEntries(taskMap: TaskMap, fromDateKey?: string) {
+    const entries: Array<{ date: string; task: Task }> = [];
+
+    for (const [date, tasks] of Object.entries(taskMap)) {
+        if (fromDateKey && date < fromDateKey) {
+            continue;
+        }
+
+        for (const task of tasks) {
+            entries.push({ date, task });
+        }
+    }
+
+    return entries;
+}
+
+export function collectSeriesTaskIds(
+    taskMap: TaskMap,
+    task: Task,
+    options?: CollectSeriesOptions,
+): string[] {
+    const entries = iterateTaskEntries(taskMap, options?.fromDateKey);
 
     if (task.seriesId) {
-        const bySeries = allTasks
-            .filter((candidate) => candidate.seriesId === task.seriesId)
-            .map((candidate) => candidate.id);
+        const bySeries = entries
+            .filter(({ task: candidate }) => candidate.seriesId === task.seriesId)
+            .map(({ task: candidate }) => candidate.id);
         if (bySeries.length) {
             return bySeries;
         }
     }
 
     const taskCreatedAt = createdAtMs(task.createdAt);
-    const byCreatedAt = allTasks
-        .filter((candidate) => {
+    const byCreatedAt = entries
+        .filter(({ task: candidate }) => {
             if (candidate.text !== task.text) {
                 return false;
             }
@@ -40,16 +65,16 @@ export function collectSeriesTaskIds(taskMap: TaskMap, task: Task): string[] {
                 && Number.isFinite(candidateCreatedAt)
                 && candidateCreatedAt === taskCreatedAt;
         })
-        .map((candidate) => candidate.id);
+        .map(({ task: candidate }) => candidate.id);
 
     if (byCreatedAt.length > 1) {
         return byCreatedAt;
     }
 
     // Eski tekrarlayan görevlerde created_at birebir tutmayabilir; aynı metni sil seçeneği için kullan.
-    return allTasks
-        .filter((candidate) => candidate.text === task.text)
-        .map((candidate) => candidate.id);
+    return entries
+        .filter(({ task: candidate }) => candidate.text === task.text)
+        .map(({ task: candidate }) => candidate.id);
 }
 
 export function isSeriesTask(taskMap: TaskMap, task: Task): boolean {

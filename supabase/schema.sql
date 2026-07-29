@@ -257,9 +257,11 @@ begin
         return;
     end if;
 
+    -- Geçmiş günler korunur; sadece bugün ve sonrası silinir (Europe/Istanbul).
     delete from public.tasks
     where series_id = p_series_id
-      and user_id = auth.uid();
+      and user_id = auth.uid()
+      and date >= (timezone('Europe/Istanbul', now()))::date;
 end;
 $$;
 

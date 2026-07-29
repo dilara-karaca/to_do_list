@@ -132,7 +132,7 @@ export default function TaskItem({ task, editable, isSeries, onToggle, onDelete 
                             </h4>
                             <p className="mt-2 text-sm leading-relaxed text-slate-500">
                                 {isSeries
-                                    ? `“${task.text}” birden fazla güne atanmış. Sadece bu günü veya atanan tümünü silebilirsin.`
+                                    ? `“${task.text}” birden fazla güne atanmış. Geçmiş günlerdeki kopyalar korunur; sadece bu günü veya bugün ve sonraki günleri silebilirsin.`
                                     : `“${task.text}” görevini silmek istediğine emin misin?`}
                             </p>
 
@@ -154,7 +154,7 @@ export default function TaskItem({ task, editable, isSeries, onToggle, onDelete 
                                         onClick={() => confirmDelete('series')}
                                         className="h-12 rounded-full bg-rose-500 px-4 text-sm font-semibold text-white shadow-lg shadow-rose-500/20 transition hover:bg-rose-600"
                                     >
-                                        Atanan tümünü sil
+                                        Bugün ve sonraki günleri sil
                                     </button>
                                 ) : null}
                                 <button

@@ -311,7 +311,14 @@ export function PlannerPage() {
         }
 
         if (scope === 'series') {
-            const seriesIds = collectSeriesTaskIds(taskMap, task);
+            // Geçmiş günlerdeki kopyalar korunur; sadece bugün ve sonrası silinir.
+            const seriesIds = collectSeriesTaskIds(taskMap, task, {
+                fromDateKey: dateKey(new Date()),
+            });
+            if (!seriesIds.length) {
+                return;
+            }
+
             const removedIds = new Set(seriesIds);
             setTaskMap((previous) => removeTasksFromMap(previous, removedIds));
             void syncTaskImmediately([], seriesIds, task.seriesId);
