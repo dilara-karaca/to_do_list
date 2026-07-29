@@ -3,6 +3,7 @@ export type Task = {
     text: string;
     completed: boolean;
     createdAt: string;
+    completedAt?: string;
     description?: string;
     userId?: string;
     seriesId?: string;

@@ -82,7 +82,8 @@ create or replace function public.upsert_own_task(
     p_date date,
     p_completed boolean,
     p_created_at timestamptz default now(),
-    p_series_id uuid default null
+    p_series_id uuid default null,
+    p_completed_at timestamptz default null
 )
 returns uuid
 language plpgsql
@@ -100,7 +101,8 @@ begin
         date,
         completed,
         created_at,
-        series_id
+        series_id,
+        completed_at
     )
     values (
         p_id,
@@ -110,7 +112,8 @@ begin
         p_date,
         p_completed,
         coalesce(p_created_at, now()),
-        p_series_id
+        p_series_id,
+        case when p_completed then p_completed_at else null end
     )
     on conflict (id) do update
     set
@@ -119,13 +122,17 @@ begin
         date = excluded.date,
         completed = excluded.completed,
         series_id = excluded.series_id,
+        completed_at = case
+            when excluded.completed then coalesce(excluded.completed_at, public.tasks.completed_at, now())
+            else null
+        end,
         updated_at = now();
 
     return p_id;
 end;
 $$;
 
-grant execute on function public.upsert_own_task(uuid, text, text, date, boolean, timestamptz, uuid) to authenticated;
+grant execute on function public.upsert_own_task(uuid, text, text, date, boolean, timestamptz, uuid, timestamptz) to authenticated;
 
 create or replace function public.delete_own_task(p_id uuid)
 returns void
@@ -170,11 +177,13 @@ create table if not exists public.tasks (
     date date not null,
     completed boolean not null default false,
     series_id uuid,
+    completed_at timestamptz,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
 
 alter table public.tasks add column if not exists series_id uuid;
+alter table public.tasks add column if not exists completed_at timestamptz;
 
 alter table public.tasks enable row level security;
 

@@ -35,6 +35,15 @@ export default function TaskItem({ task, editable, isSeries, onToggle, onDelete 
         onDelete(task.id, scope);
     };
 
+    const formatTime = (value: string) =>
+        new Date(value).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+
+    const timeLabel = task.completed
+        ? task.completedAt
+            ? `Oluşturulma: ${formatTime(task.createdAt)} · Tamamlandı: ${formatTime(task.completedAt)}`
+            : `Oluşturulma: ${formatTime(task.createdAt)} · Tamamlandı`
+        : `Oluşturulma: ${formatTime(task.createdAt)}`;
+
     return (
         <>
             <Motion.div
@@ -79,7 +88,7 @@ export default function TaskItem({ task, editable, isSeries, onToggle, onDelete 
                         {task.text}
                     </p>
                     <p className={`mt-1 text-xs ${task.completed ? 'text-emerald-700/80' : 'text-slate-400'}`}>
-                        {task.completed ? 'Tamamlandı' : 'Oluşturulma'}: {new Date(task.createdAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+                        {timeLabel}
                     </p>
                 </div>
 

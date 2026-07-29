@@ -13,6 +13,7 @@ const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap => {
             description: row.description ?? undefined,
             completed: row.completed,
             createdAt: row.created_at,
+            completedAt: row.completed_at ?? undefined,
             userId: row.user_id,
             seriesId: row.series_id ?? undefined,
         });
@@ -197,6 +198,7 @@ export async function upsertSingleTask(
             completed: task.completed,
             created_at: task.createdAt,
             series_id: task.seriesId ?? null,
+            completed_at: task.completed ? (task.completedAt ?? null) : null,
         };
 
         const { error: rpcError } = await supabase.rpc('upsert_own_task', {
@@ -207,6 +209,7 @@ export async function upsertSingleTask(
             p_completed: task.completed,
             p_created_at: task.createdAt,
             p_series_id: task.seriesId ?? null,
+            p_completed_at: task.completed ? (task.completedAt ?? null) : null,
         });
 
         if (!rpcError) {

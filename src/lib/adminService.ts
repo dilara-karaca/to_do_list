@@ -41,6 +41,7 @@ const mapRowsToTaskMap = (rows: DbTaskRow[]): TaskMap =>
             description: row.description ?? undefined,
             completed: row.completed,
             createdAt: row.created_at,
+            completedAt: row.completed_at ?? undefined,
             userId: row.user_id,
             seriesId: row.series_id ?? undefined,
         });

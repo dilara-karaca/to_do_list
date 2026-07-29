@@ -239,7 +239,18 @@ export function PlannerPage() {
             return;
         }
 
-        const nextTasks = activeTasks.map((task) => (task.id === taskId ? { ...task, completed: !task.completed } : task));
+        const nextTasks = activeTasks.map((task) => {
+            if (task.id !== taskId) {
+                return task;
+            }
+
+            const completed = !task.completed;
+            return {
+                ...task,
+                completed,
+                completedAt: completed ? new Date().toISOString() : undefined,
+            };
+        });
         updateTasks(nextTasks);
         const changed = nextTasks.find((task) => task.id === taskId);
         if (changed) {
