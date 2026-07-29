@@ -38,14 +38,7 @@ export default function DayModal({
     const [isComposerOpen, setIsComposerOpen] = useState(false);
     const [isRepeatMenuOpen, setIsRepeatMenuOpen] = useState(false);
     const [recurrence, setRecurrence] = useState<TaskRecurrence | null>(null);
-    const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
-
-    const pendingDeleteTask = useMemo(
-        () => (pendingDeleteId ? tasks.find((task) => task.id === pendingDeleteId) ?? null : null),
-        [pendingDeleteId, tasks],
-    );
-    const pendingIsSeries = pendingDeleteId ? isSeriesTask(pendingDeleteId) : false;
 
     const closeComposer = () => {
         setIsComposerOpen(false);
@@ -67,34 +60,16 @@ export default function DayModal({
         closeComposer();
     };
 
-    const handleDeleteRequest = (taskId: string) => {
-        // Her silmede seçenek göster; tekrarlayanlarda "tümünü sil" de çıkar.
-        setPendingDeleteId(taskId);
-    };
-
-    const confirmDelete = (scope: TaskDeleteScope) => {
-        if (!pendingDeleteId) {
-            return;
-        }
-
-        onDeleteTask(pendingDeleteId, scope);
-        setPendingDeleteId(null);
-    };
-
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.key === 'Escape') {
-                if (pendingDeleteId) {
-                    setPendingDeleteId(null);
-                    return;
-                }
                 onClose();
             }
         };
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [onClose, pendingDeleteId]);
+    }, [onClose]);
 
     useEffect(() => {
         if (isComposerOpen) {
@@ -252,78 +227,15 @@ export default function DayModal({
                             </AnimatePresence>
                         ) : null}
 
-                        <TaskList tasks={tasks} editable={editable} onToggle={onToggleTask} onDelete={handleDeleteRequest} />
+                        <TaskList
+                            tasks={tasks}
+                            editable={editable}
+                            isSeriesTask={isSeriesTask}
+                            onToggle={onToggleTask}
+                            onDelete={onDeleteTask}
+                        />
                     </div>
                 </div>
-
-                <AnimatePresence>
-                    {pendingDeleteTask ? (
-                        <Motion.div
-                            className="absolute inset-0 z-20 flex items-end justify-center bg-slate-900/25 p-4 sm:items-center"
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            onClick={() => setPendingDeleteId(null)}
-                        >
-                            <Motion.div
-                                role="dialog"
-                                aria-modal="true"
-                                aria-label="Tekrarlayan görevi sil"
-                                initial={{ opacity: 0, y: 18, scale: 0.96 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: 12, scale: 0.97 }}
-                                transition={{ type: 'spring', stiffness: 360, damping: 28 }}
-                                className="w-full max-w-md rounded-[28px] border border-white/80 bg-white/95 p-5 shadow-xl shadow-slate-900/10"
-                                onClick={(event) => event.stopPropagation()}
-                            >
-                                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-rose-400">
-                                    {pendingIsSeries ? 'Tekrarlayan görev' : 'Görevi sil'}
-                                </p>
-                                <h4 className="mt-3 text-xl font-semibold tracking-tight text-slate-900">
-                                    Nasıl silmek istersin?
-                                </h4>
-                                <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                                    {pendingIsSeries
-                                        ? `“${pendingDeleteTask.text}” birden fazla güne atanmış görünüyor. Sadece bugünkü örneği veya atanan tümünü silebilirsin.`
-                                        : `“${pendingDeleteTask.text}” görevini silmek istediğine emin misin?`}
-                                </p>
-
-                                <div className="mt-5 flex flex-col gap-2.5">
-                                    <Motion.button
-                                        type="button"
-                                        whileTap={{ scale: 0.98 }}
-                                        onClick={() => confirmDelete('single')}
-                                        className={`h-12 rounded-full px-4 text-sm font-semibold transition ${
-                                            pendingIsSeries
-                                                ? 'border border-slate-200 bg-white text-slate-800 hover:bg-slate-50'
-                                                : 'bg-rose-500 text-white shadow-lg shadow-rose-500/20 hover:bg-rose-600'
-                                        }`}
-                                    >
-                                        Sadece bu görevi sil
-                                    </Motion.button>
-                                    {pendingIsSeries ? (
-                                        <Motion.button
-                                            type="button"
-                                            whileTap={{ scale: 0.98 }}
-                                            onClick={() => confirmDelete('series')}
-                                            className="h-12 rounded-full bg-rose-500 px-4 text-sm font-semibold text-white shadow-lg shadow-rose-500/20 transition hover:bg-rose-600"
-                                        >
-                                            Atanan tümünü sil
-                                        </Motion.button>
-                                    ) : null}
-                                    <Motion.button
-                                        type="button"
-                                        whileTap={{ scale: 0.98 }}
-                                        onClick={() => setPendingDeleteId(null)}
-                                        className="h-11 rounded-full px-4 text-sm font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
-                                    >
-                                        Vazgeç
-                                    </Motion.button>
-                                </div>
-                            </Motion.div>
-                        </Motion.div>
-                    ) : null}
-                </AnimatePresence>
             </Motion.section>
         </Motion.div>
     );
